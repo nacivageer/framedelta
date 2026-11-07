@@ -48,6 +48,10 @@ _COARSEN_MIN_TOTAL_MS = 5000   # 只对长片段粗化区间，短片段保持�
 KEY_BUDGET = {"base": 4, "free_ms": 8000, "per_ms": 4000, "cap": 8}
 KEY_BUDGET_RULE = "≤8s 4 张；超过 8s 后每 4 秒 +1（向上取整）；上限 8"
 
+# 代表帧去重（2026-11-08）：两格 NCC ≥ 0.90 就是同一张画面（同一页幻灯片 0.95–0.98，
+# 同场景换机位 0.3–0.5）。只对 >8s 的输入启用，≤8s 的产物保持不变。
+_KEY_SAME_PICTURE = 0.90
+
 TH = {
     "repeat_mean_abs_rgb": 1.0,   # 重复帧：整帧 RGB 均值绝对差 < 1.0
     "jump_hsv_score": 18.0,        # 突变候选：HSV 三通道加权差（0–255）
@@ -764,8 +768,14 @@ def key_budget(total_ms: float, key_n: int | None = None) -> dict:
 
 
 def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
-                    multi_cut=False):
-    """L2 闸门：把时间轴切成 k 段，每段挑一个最有信息量的帧。"""
+                    multi_cut=False, similar=None, tail=False):
+    """L2 闸门：把时间轴切成 k 段，每段挑一个最有信息量的帧。
+
+    similar(i, j) -> NCC：给了就启用两条长片段规则——
+      * 同一张画面不重复占格（静止段/落地页会连着取两三格）；
+      * 末态保证：末帧是还没出现过的新画面、且尾段没有 jump 时，必须有一格落在末帧。
+    tail 由调用方判断（尾段有没有硬切），不给 similar 时全部保持旧行为。
+    """
     n = len(pairs) + 1
     if n <= 2 * k:
         # 短片段：均匀撒点比按能量挑更有用（首尾都要看到）
@@ -840,7 +850,7 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
                 seen.add(fi)
                 out.append((fi, why))
         if len(out) >= 2:
-            return _dedupe_adjacent(sorted(out), prio, n, k)
+            return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail)
 
     chosen = []
     for b in range(k):
@@ -857,11 +867,14 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
         if fi not in seen:
             seen.add(fi)
             out.append((fi, why))
-    return _dedupe_adjacent(sorted(out), prio, n, k)
+    return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail)
 
 
-def _dedupe_adjacent(out, prio, n, k):
-    """两帧挨在 3 帧以内时只留优先级高的那张，空出的槽位用远端补。"""
+def _dedupe_adjacent(out, prio, n, k, similar=None, tail=False):
+    """两帧挨在 3 帧以内时只留优先级高的那张，空出的槽位用远端补。
+
+    similar 给了就再走两条：同一张画面只留一格；末帧（尾段没有硬切时）必须有一格。
+    """
     if len(out) < 2:
         return out
     out = list(out)
@@ -878,6 +891,22 @@ def _dedupe_adjacent(out, prio, n, k):
             out.pop(drop)
             continue
         i += 1
+
+    if similar is not None:
+        out = sorted(_drop_same_picture(out, prio, similar))
+        if tail and not any(fi == n - 1 for fi, _ in out) \
+                and all(similar(n - 1, fi) < _KEY_SAME_PICTURE for fi, _ in out):
+            # 末态：末帧是「还没出现在任何格子里」的新画面才值得占一格。
+            # 尾段有硬切时这条不启用——那种时间已经在 jumps 里，读者拿得到，
+            # 占一格换掉的往往是更值钱的画面（L1 的 14.88 就是 1 帧硬切）。
+            plain = [(prio.get(fi, (0, ""))[0], j) for j, (fi, why) in enumerate(out)
+                     if why not in ("before_jump", "after_jump")]
+            if plain:
+                out.pop(min(plain)[1])
+                out.append((n - 1, "last"))
+                out.sort()
+        return _fill_by_gap(out, n, k, similar)
+
     while len(out) < k:
         span = n - 1
         cand = max(range(0, n, max(1, span // (k * 2))),
@@ -885,6 +914,45 @@ def _dedupe_adjacent(out, prio, n, k):
         if any(abs(cand - o[0]) <= 3 for o in out):
             break
         out.append((cand, "fill"))
+    return sorted(out)
+
+
+def _drop_same_picture(out, prio, similar, same=_KEY_SAME_PICTURE):
+    """同一张画面只留一格（留优先级高的那格）。静止素材里这条能省下两三格。"""
+    kept = []
+    for fi, why in out:
+        hit = next((j for j, (fj, _) in enumerate(kept) if similar(fi, fj) >= same), None)
+        if hit is None:
+            kept.append((fi, why))
+        elif prio.get(fi, (0, ""))[0] > prio.get(kept[hit][0], (0, ""))[0]:
+            kept[hit] = (fi, why)
+    return kept
+
+
+def _fill_by_gap(out, n, k, similar, same=_KEY_SAME_PICTURE):
+    """补格子补在「离现有格子最远」的地方，而且必须是还没出现过的画面。
+
+    旧实现按固定步长扫候选，会漏掉真正的远端；这里扫全帧、按「到最近格子的距离」
+    从远到近试。静止段里的帧与已有格子 NCC ≥ 0.9，会被跳过——宁可比预算少一张
+    （`budget.images` 如实写），也不拿一张重复画面占格。
+    """
+    out = list(out)
+    tried = set(f for f, _ in out)
+    while len(out) < k:
+        cells = [f for f, _ in out]
+        order = sorted(((min(abs(f - g) for g in cells), f) for f in range(n)
+                        if f not in tried and f != n - 1), reverse=True)
+        placed = False
+        for d, f in order:
+            if d <= 3:
+                break
+            if all(similar(f, g) < same for g in cells):
+                out.append((f, "fill"))
+                tried.add(f)
+                placed = True
+                break
+        if not placed:
+            break
     return sorted(out)
 
 
@@ -1167,9 +1235,24 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     # 先判 swap/drift，再选代表帧——「变化的那一帧」要参与选帧
     swaps, drifts = content_events(pairs, frames, idx, times)
     budget = key_budget(total_ms, key_n)
-    picked = pick_key_frames(pairs, n, budget["k"], shots=shots_grid,
+    k_want = budget["k"]
+    # 长片段才开「同一画面不重复占格」与「末态保证」：≤8s 的产物保持一字不变
+    similar, tail = None, False
+    if total_ms > KEY_BUDGET["free_ms"] and len(idx) == n:
+        grid_cache = {}
+
+        def similar(i, j, _c=grid_cache):
+            for g in (i, j):
+                if g not in _c:
+                    _c[g] = grid_rgb(frames[idx[g]])
+            return grid_ncc(_c[i], _c[j])
+
+        last_start = shots_grid[-1]["start_frame"] if shots_grid else 0
+        tail = not any(p["kind"] == "jump" and p["frame"] > last_start for p in pairs)
+    picked = pick_key_frames(pairs, n, k_want, shots=shots_grid,
                              swaps=swaps, drifts=drifts,
-                             multi_cut=len(struct["transitions"]) > 1)
+                             multi_cut=len(struct["transitions"]) > 1,
+                             similar=similar, tail=tail)
     keys = [fi for fi, _ in picked]
     reasons = {fi: why for fi, why in picked}
     by_frame = {p["frame"]: p for p in pairs}
@@ -1192,6 +1275,9 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     real_keys = [idx[k] for k in keys]
     # 预算 k 与实出图数一起交出去：去重补位可能补不满，读图方要知道「本来该有几张」
     budget = {**budget, "images": len(keys)}
+    if len(keys) < k_want:
+        budget["note"] = ("同一画面不重复占格：预算 %d 张、实出 %d 张"
+                          % (k_want, len(keys)))
 
     # meta.json
     meta = {

@@ -97,16 +97,62 @@ def test_short_clip_unchanged():
         check("短片段 %dms 的 k" % ms, key_budget(ms)["k"], 4)
 
 
+def _synth_pairs(n=40):
+    return [{"frame": i, "kind": "motion" if i % 3 else "still", "energy": float(i % 7),
+             "t_ms": float(i * 100), "t_start_ms": float(i * 100 - 100)} for i in range(1, n + 1)]
+
+
+def test_same_picture_not_repeated():
+    """同一张画面不重复占格：静止素材里不会出现两三格同一张图（L3 的 8 格 4 重复的直接对策）。"""
+    pairs = _synth_pairs()
+
+    # 全部是同一张画面：只该留一格，而不是把预算塞满同一张图
+    picked = pick_key_frames(pairs, 41, 6, similar=lambda i, j: 1.0)
+    check_true("全是同一张画面却占了 %d 格" % len(picked), len(picked) <= 2,
+               "%r" % [f for f, _ in picked])
+
+    # 全都不一样：预算该用满
+    picked = pick_key_frames(pairs, 41, 6, similar=lambda i, j: 0.0)
+    check_true("画面全不同却没给满 6 格：%r" % [f for f, _ in picked], len(picked) == 6)
+
+
+def test_tail_guaranteed():
+    """末态保证：末帧是没出现过的新画面、且尾段无硬切时，末帧必须有一格。"""
+    pairs = _synth_pairs()
+    for k in (4, 6, 8):
+        picked = pick_key_frames(pairs, 41, k, similar=lambda i, j: 0.0, tail=True)
+        frames = [f for f, _ in picked]
+        check_true("k=%d 末帧(40)不在代表帧里：%r" % (k, frames), 40 in frames)
+
+    # 末帧与第一格是同一张画面时不该额外占一格（留优先级高的那个）
+    picked = pick_key_frames(pairs, 41, 6, similar=lambda i, j: 1.0 if {i, j} == {0, 40} else 0.0,
+                             tail=True)
+    frames = [f for f, _ in picked]
+    check_true("末帧与首格同图却两张都占了：%r" % frames, not (0 in frames and 40 in frames))
+
+
+def test_similar_off_keeps_old_shape():
+    """不给 similar 时行为不变（短片段与旧路径都走这条）。"""
+    pairs = _synth_pairs()
+    for k in (4, 6, 8):
+        picked = pick_key_frames(pairs, 41, k)
+        check_true("k=%d 不给 similar 时每格理由缺失" % k,
+                   all(why for _, why in picked), "%r" % picked)
+
+
 def main():
     for fn in (test_boundaries, test_monotonic, test_derivation_text, test_fixed,
-               test_pick_respects_k, test_short_clip_unchanged):
+               test_pick_respects_k, test_short_clip_unchanged,
+               test_same_picture_not_repeated, test_tail_guaranteed,
+               test_similar_off_keeps_old_shape):
         fn()
     if FAILED:
         print("FAIL %d 条：" % len(FAILED))
         for f in FAILED:
             print("  - " + f)
         return 1
-    print("PASS 6 组检查（边界 / 单调 / 推法文本 / --key 写死 / 选帧不超预算 / 短片段不变）")
+    print("PASS 9 组检查（边界 / 单调 / 推法文本 / --key 写死 / 选帧不超预算 / 短片段不变"
+          " / 同图不重复 / 末态保证 / 关掉去重仍可用）")
     return 0
 
 
