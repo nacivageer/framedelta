@@ -69,7 +69,8 @@ def main():
 
     print("\n%s：变化命中 %d/%d（±%.1fs）；次数完全一致 %d/%d" % (
         a.label, matched_total, truth_total, a.tol,
-        sum(1 for r in rows if "✗" not in str(r[2])), len(truth)))
+        # 只数「真答了且次数对」的：缺答的格子写的是「缺答」，不能算一致
+        sum(1 for r in rows if "✓" in str(r[2])), len(truth)))
     return 0
 
 
