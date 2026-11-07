@@ -1,0 +1,61 @@
+{
+ "L1_trailer": {
+  "count": 4,
+  "changes": [
+   {
+    "t_s": 2.18,
+    "what": "transition"
+   },
+   {
+    "t_s": 4.52,
+    "what": "transition"
+   },
+   {
+    "t_s": 12.74,
+    "what": "transition"
+   },
+   {
+    "t_s": 14.88,
+    "what": "transition"
+   }
+  ]
+ },
+ "L2_aimanhua": {
+  "count": 5,
+  "changes": [
+   {
+    "t_s": 0.1,
+    "what": "transition"
+   },
+   {
+    "t_s": 1.81,
+    "what": "transition"
+   },
+   {
+    "t_s": 5.31,
+    "what": "transition"
+   },
+   {
+    "t_s": 6.86,
+    "what": "transition"
+   },
+   {
+    "t_s": 11.19,
+    "what": "transition"
+   }
+  ]
+ },
+ "L3_screen": {
+  "count": 2,
+  "changes": [
+   {
+    "t_s": 6.43,
+    "what": "drift"
+   },
+   {
+    "t_s": 8.15,
+    "what": "transition"
+   }
+  ]
+ }
+}

@@ -2,7 +2,7 @@
 
 回答的不是「切点检测准不准」（那是 `tools/calib.py` 的事），而是**产品问题**：只给产物，读图方能不能说出「变化在哪、多大、几次」。
 
-- 真值：`eval/truth.json`（人工看全帧写的，一行一段，带来源与时间）
+- 真值：`eval/truth.json`（9 段 3 秒）+ `eval/truth_long.json`（3 段 15 秒），都是人工抽帧核过、带来源与时间
 - 协议：本文件
 - 产物：`runs/eval/<case>/`（git 忽略；重跑命令见文末）
 
@@ -24,11 +24,23 @@
 
 前六段从 bilibili 工作区评审时留下的视频里切（`tools/scan.py` 找变化量最大的窗口）；后三段是 2026-11-08 补的「别的口味」素材（预告片来自 `see-now/_scratch/trailer.mp4`，另外两段按 BV 号下载 480p）。
 
+## 长片段（15 秒）
+
+补的三段 15 秒窗口，用来回答「代表帧预算够不够」——3 秒片段回答不了这个问题。
+
+| case | 来源 | 内容 | 真值次数 |
+|---|---|---|---|
+| `L1_trailer` | 影之刃零 最终预告 130–145s | 打斗 → 闪白片名 → 花海 → 女子近景 → 骑兵，两次交叉溶解 | 5 |
+| `L2_aimanhua` | BV1KjnK6EE46 5–20s | 六次换场，全是硬切或带运动模糊的切 | 5 |
+| `L3_screen` | 屏幕录制 138–153s | 幻灯片 + 开始菜单窗口进出 + 换页 + 整幅换到落地页 | 4 |
+
+真值在 `eval/truth_long.json`（写法同 `truth.json`，每条带抽帧复核记录）。计数仍按 5% 面积与「状态切换」口径。已评估但未计入的点（例如 L3 顶部标签栏出现，面积约 4%）写在各自的 `note` 里。
+
 ## 做法
 
 1. 人工看全帧写真值：第几秒、几次、什么性质；不写语义（在讲什么不属于 L1/L2）。
 2. 读图方**只看** `runs/eval/<case>/` 里的 `digest.json` + `digest.budget.k` 张图（≤8s 是 4 张，15 秒是 6 张），作答同样三项。不看原片段、不看 `truth.json`。
-3. 对分：次数一致、时间误差 ≤1s、性质不错 = 命中。`python tools/score.py eval/truth.json <answers.json>`。
+3. 对分：次数一致、时间误差 ≤0.5s、性质不错 = 命中。`python tools/score.py eval/truth.json <answers.json> --tol 0.5`。
 
 读图方必须换一个 agent（自读自答没有意义）。
 
@@ -47,4 +59,12 @@ python tools/scan.py <视频> --topk 3                     # 找变化窗口
 ffmpeg -ss <t> -t 3 -i <视频> -an -c:v libx264 -crf 20 runs/eval/_clips/<case>.mp4
 python gif_digest.py runs/eval/_clips/<case>.mp4 --out runs/eval/<case>
 python tools/uniform.py runs/eval/_clips/<case>.mp4 --n 8 --out runs/eval/_uniform/<case>.png
+```
+
+预算对照实验（同一段、同一批问题，只差给几张图）：
+
+```
+python gif_digest.py runs/eval/_clips/L1_trailer.mp4 --out runs/eval4/L1_trailer --key 4
+python tools/score.py eval/truth_long.json eval/answers_L1-L3_k4.json --tol 0.5
+python tools/score.py eval/truth_long.json eval/answers_L1-L3_k6.json --tol 0.5
 ```
