@@ -1,59 +1,141 @@
 {
-  "protocol": {
-    "怎么做的": "从 bilibili 工作区评审时下载的视频里切 3 秒窗口（tools/scan.py 找变化量最大的窗口），各跑一次 gif_digest.py；真值由人工看全帧写定（video_storyboard + tools/peek.py 核对争议处）",
-    "计数约定": {
-      "计入": "画面状态切换：整幅或明显区域（>5% 面积）的替换、换页、换场、明显位移/缩放、大对象出现；A→空屏→B 这类有可见中间态的，按两次算（空屏也是画面状态）",
-      "不计入": "字幕文字、小面板文字更新（<1% 面积）、循环动画的持续小动；淡入淡出的过程本身不额外计一次"
-    },
-    "读图方规则": "只给 runs/eval/<case>/ 里的 digest.json + 至多 4 张图，不给原片段、不给本真值文件；读图方必须换 agent",
-    "评分": "次数一致；时间误差 ≤0.5s（3 秒片段里 1s 太松，会奖励巧合）；性质不错",
-    "修订": "2026-11-07 首版真值凭 4 格 storyboard 写，e2 漏了「淡出→淡入」两阶段、e3 把一次叠化拆成两次、e5 未定性小面板更新；读图方指出后逐点抽帧复核（runs/_probe/e{2,3,5}_verify.png），据此改定本版"
+ "protocol": {
+  "怎么做的": "从 bilibili 工作区评审时下载的视频里切 3 秒窗口（tools/scan.py 找变化量最大的窗口），各跑一次 gif_digest.py；真值由人工看全帧写定（video_storyboard + tools/peek.py 核对争议处）",
+  "计数约定": {
+   "计入": "画面状态切换：整幅或明显区域（>5% 面积）的替换、换页、换场、明显位移/缩放、大对象出现；A→空屏→B 这类有可见中间态的，按两次算（空屏也是画面状态）",
+   "不计入": "字幕文字、小面板文字更新（<1% 面积）、循环动画的持续小动；淡入淡出的过程本身不额外计一次"
   },
-  "cases": {
-    "e1_slides": {
-      "source": "BV1rop26FEZf 13.5–16.5s（dsh-read-animation 视频）",
-      "truth_changes": [
-        {"t_s": 2.5, "kind": "文字页整页切换", "note": "标题「发一张 GIF，直接问」→「它读出了动作变化」，整页内容一起换"}
-      ],
-      "truth_count": 1
-    },
-    "e2_ui": {
-      "source": "BV13Z4B6wERz 10.5–13.5s（Cixisound 视频）",
-      "truth_changes": [
-        {"t_s": 1.4, "kind": "文字块撤掉", "note": "「20,000+ / 一个本地跑的音频分析插件」整体消失，只剩空背景与字幕"},
-        {"t_s": 1.7, "kind": "新页淡入", "note": "「这期三件事」标题与小字淡入，0.2s 内稳定；背景配色不变"}
-      ],
-      "truth_count": 2
-    },
-    "e3_a": {
-      "source": "BV1yNnC6nEyo 6.5–9.5s",
-      "truth_changes": [
-        {"t_s": 1.0, "kind": "叠化换场", "note": "旧场景（角色趴在显示器前、问号）0.8s 前后淡出到近全黑，约 1.05s 已淡入新场景（戴耳机、音符与「啊啊啊 / 听不清!」）；一次过渡"}
-      ],
-      "truth_count": 1
-    },
-    "e4_b": {
-      "source": "BV1YM4P6qE8r 8.0–11.0s",
-      "truth_changes": [
-        {"t_s": 0.57, "kind": "整页文案替换", "note": "「破甲之后你还会听我的话吗」→「会」；人物立绘消失，底色不变"}
-      ],
-      "truth_count": 1
-    },
-    "e5_c": {
-      "source": "BV11jnm6bENb 392.5–395.5s",
-      "truth_changes": [],
-      "truth_count": 0,
-      "note": "负样本：屏幕主体不变。右侧小设置面板文字与底部字幕有更新，但面积远低于 5%，按约定不计入"
-    },
-    "e6_d": {
-      "source": "BV1MdpT6tENu 143.5–146.5s",
-      "truth_changes": [
-        {"t_s": 0.37, "kind": "窗口出现", "note": "桌面/资源管理器窗口覆盖幻灯片下半部"},
-        {"t_s": 0.97, "kind": "换页", "note": "窗口消失，幻灯片从「Harness，不是破解模型」换到「Agent 不等于 模型」"},
-        {"t_s": 1.67, "kind": "画面重构", "note": "顶部浏览器标签栏与底部任务栏出现，视频区域被夹住"},
-        {"t_s": 2.73, "kind": "整幅换画", "note": "换到浅色首屏「DeepSeek Harness 现在，开始拥有」+ 深色终端窗口"}
-      ],
-      "truth_count": 4
+  "读图方规则": "只给 runs/eval/<case>/ 里的 digest.json + 至多 4 张图，不给原片段、不给本真值文件；读图方必须换 agent",
+  "评分": "次数一致；时间误差 ≤0.5s（3 秒片段里 1s 太松，会奖励巧合）；性质不错",
+  "修订": "2026-11-07 首版真值凭 4 格 storyboard 写，e2 漏了「淡出→淡入」两阶段、e3 把一次叠化拆成两次、e5 未定性小面板更新；读图方指出后逐点抽帧复核（runs/_probe/e{2,3,5}_verify.png），据此改定本版"
+ },
+ "cases": {
+  "e1_slides": {
+   "source": "BV1rop26FEZf 13.5–16.5s（dsh-read-animation 视频）",
+   "truth_changes": [
+    {
+     "t_s": 2.5,
+     "kind": "文字页整页切换",
+     "note": "标题「发一张 GIF，直接问」→「它读出了动作变化」，整页内容一起换"
     }
+   ],
+   "truth_count": 1
+  },
+  "e2_ui": {
+   "source": "BV13Z4B6wERz 10.5–13.5s（Cixisound 视频）",
+   "truth_changes": [
+    {
+     "t_s": 1.4,
+     "kind": "文字块撤掉",
+     "note": "「20,000+ / 一个本地跑的音频分析插件」整体消失，只剩空背景与字幕"
+    },
+    {
+     "t_s": 1.7,
+     "kind": "新页淡入",
+     "note": "「这期三件事」标题与小字淡入，0.2s 内稳定；背景配色不变"
+    }
+   ],
+   "truth_count": 2
+  },
+  "e3_a": {
+   "source": "BV1yNnC6nEyo 6.5–9.5s",
+   "truth_changes": [
+    {
+     "t_s": 1.0,
+     "kind": "叠化换场",
+     "note": "旧场景（角色趴在显示器前、问号）0.8s 前后淡出到近全黑，约 1.05s 已淡入新场景（戴耳机、音符与「啊啊啊 / 听不清!」）；一次过渡"
+    }
+   ],
+   "truth_count": 1
+  },
+  "e4_b": {
+   "source": "BV1YM4P6qE8r 8.0–11.0s",
+   "truth_changes": [
+    {
+     "t_s": 0.57,
+     "kind": "整页文案替换",
+     "note": "「破甲之后你还会听我的话吗」→「会」；人物立绘消失，底色不变"
+    }
+   ],
+   "truth_count": 1
+  },
+  "e5_c": {
+   "source": "BV11jnm6bENb 392.5–395.5s",
+   "truth_changes": [],
+   "truth_count": 0,
+   "note": "负样本：屏幕主体不变。右侧小设置面板文字与底部字幕有更新，但面积远低于 5%，按约定不计入"
+  },
+  "e6_d": {
+   "source": "BV1MdpT6tENu 143.5–146.5s",
+   "truth_changes": [
+    {
+     "t_s": 0.37,
+     "kind": "窗口出现",
+     "note": "桌面/资源管理器窗口覆盖幻灯片下半部"
+    },
+    {
+     "t_s": 0.97,
+     "kind": "换页",
+     "note": "窗口消失，幻灯片从「Harness，不是破解模型」换到「Agent 不等于 模型」"
+    },
+    {
+     "t_s": 1.67,
+     "kind": "画面重构",
+     "note": "顶部浏览器标签栏与底部任务栏出现，视频区域被夹住"
+    },
+    {
+     "t_s": 2.73,
+     "kind": "整幅换画",
+     "note": "换到浅色首屏「DeepSeek Harness 现在，开始拥有」+ 深色终端窗口"
+    }
+   ],
+   "truth_count": 4
+  },
+  "e7_trailer": {
+   "source": "影之刃零 最终预告（see-now/_scratch/trailer.mp4）133.5–136.5s，960x540 30fps",
+   "truth_changes": [
+    {
+     "t_s": 1.05,
+     "kind": "爆炸强闪光",
+     "note": "近景劈砍→白光爆闪，整幅瞬间变亮"
+    },
+    {
+     "t_s": 1.19,
+     "kind": "爆炸扩散",
+     "note": "白光扩散到覆盖大半个画面"
+    }
+   ],
+   "truth_count": 2,
+   "note": "连续动作，无硬切；video_storyboard 报的 5 个 cut 是快速运镜/爆炸误判，已抽帧复核（runs/_probe/e7_cuts.png）"
+  },
+  "e8_fufu": {
+   "source": "BV1gf4P6YEnS 45.5–48.5s，960x540 30fps",
+   "truth_changes": [
+    {
+     "t_s": 0.77,
+     "kind": "硬切换镜",
+     "note": "宽景→近景（披风占满画面）"
+    }
+   ],
+   "truth_count": 1,
+   "note": "之后是连续快速运动，无新切点；工具报的 2.11/2.18 是快速运动造成的大面积瞬时变化，抽帧复核未见换画面（runs/_probe/e8_cuts.png）"
+  },
+  "e9_aimanhua": {
+   "source": "BV1KjnK6EE46 9.5–12.5s，960x540 30fps",
+   "truth_changes": [
+    {
+     "t_s": 0.87,
+     "kind": "换镜",
+     "note": "集市全景（两人）→ 蓝发少女近景，带运动模糊"
+    },
+    {
+     "t_s": 2.43,
+     "kind": "换镜",
+     "note": "切到另一位角色（教堂/黑衣人群场景）"
+    }
+   ],
+   "truth_count": 2,
+   "note": "1.00s 处是同一镜头的余波，不计（runs/_probe/e9_cuts.png）"
   }
+ }
 }

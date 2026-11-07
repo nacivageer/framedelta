@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """framedelta v1 —— 把一段连续帧压成「可读的变化描述 + 几张能读懂的图」。
 
 只吃路径、只吐文件。语义不在本工具的产出里（见 docs/决策记录.md 的三层分工）。
@@ -54,6 +54,7 @@ TH = {
     "subtle_scale": 0.02,
     "spike_factor": 1.5,          # 突变必须是邻域尖峰：hsv ≥ factor×邻域中位数 + offset
     "spike_offset": 3.0,
+    "spike_baseline_q": 0.5,      # 邻域基线取哪个分位；密接切点（动作片）需要更低的基线
     "transition_gap_ms": 250,     # 相邻突变间隔小于此值 → 同一次转场
     # 内容替换（布局不变、大块内容换）：尖峰规则看不见这类
     "swap_changed_frac": 0.30,
@@ -563,7 +564,7 @@ def classify_pairs(pairs, th=None):
     for i, p in enumerate(pairs):
         lo, hi = max(0, i - 8), min(len(pairs), i + 9)
         win = [hs[j] for j in range(lo, hi) if j != i]
-        base = float(np.median(win)) if win else 0.0
+        base = float(np.quantile(win, th["spike_baseline_q"])) if win else 0.0
         p["hsv_base"] = base
         if p["kind"] == "jump" and p["hsv"] < th["spike_factor"] * base + th["spike_offset"]:
             p["kind"] = "subtle" if p["energy"] < th["subtle_energy"] else "motion"
@@ -675,7 +676,8 @@ def shot_structure(pairs, idx, times, total_ms):
     return {"transitions": transitions, "shots": shots}
 
 
-def pick_key_frames(pairs, n_frames, k=4, shots=None):
+def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
+                    multi_cut=False):
     """L2 闸门：把时间轴切成 k 段，每段挑一个最有信息量的帧。"""
     n = len(pairs) + 1
     if n <= 2 * k:
@@ -687,10 +689,22 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
         if p["kind"] == "jump":
             # 突变帧优先于镜头能量峰值：漏掉它，annotated 上就只剩 Δarea 0% 的帧，
             # 读图方会以为这段没变化（评测 e4 就是这样：跳变在 0.56s，四张图全是 0%）。
-            for fi, why, base in ((p["frame"] - 1, "before_jump", 2.7),
+            # 密集切点时不优先「切点前一帧」：否则 4 个格子会被几组相邻帧吃掉，
+            # 反而没有一张图代表「这一段长什么样」（评测 e8 就是这样）
+            before_p = 2.0 if multi_cut else 2.7
+            for fi, why, base in ((p["frame"] - 1, "before_jump", before_p),
                                   (p["frame"], "after_jump", 3.0)):
                 if 0 <= fi < n and prio.get(fi, (0, ""))[0] < base:
                     prio[fi] = (base, why)
+    # 内容替换与累积变化同样是「变化的那一帧」，漏掉它们代表帧就只剩静止画面
+    for s in swaps or []:
+        fi = s["frame"]
+        if 0 <= fi < n and prio.get(fi, (0, ""))[0] < 2.9:
+            prio[fi] = (2.9, "swap")
+    for d in drifts or []:
+        fi = d["end_frame"]
+        if 0 <= fi < n and prio.get(fi, (0, ""))[0] < 2.35:
+            prio[fi] = (2.35, "drift_end")
     ranked = sorted((p for p in pairs if p["kind"] in ("motion", "subtle")),
                     key=lambda p: -p["energy"])
     for rank, p in enumerate(ranked[:8]):
@@ -727,7 +741,7 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
             alloc[i] += 1
         picked = []
         for (lo, hi), cnt in zip(ranges, alloc):
-            picked += _pick_in_range(prio, lo, hi, cnt)
+            picked += _pick_in_range(prio, lo, hi, cnt, n)
         seen, out = set(), []
         for fi, why in picked:
             if fi not in seen:
@@ -754,9 +768,9 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
     return sorted(out)
 
 
-def _pick_in_range(prio, lo, hi, cnt):
+def _pick_in_range(prio, lo, hi, cnt, n):
     """在 [lo, hi] 里按优先级挑 cnt 个，彼此至少隔开一段（避免两张图几乎一样）。"""
-    cands = sorted(((pr, fi, why) for fi, (pr, why) in prio.items() if lo <= fi <= hi),
+    cands = sorted(((pr, fi, why) for fi, (pr, why) in prio.items() if lo <= fi <= hi and 0 <= fi < n),
                    key=lambda c: (-c[0], c[1]))
     span = hi - lo + 1
     min_gap = max(1, span // (cnt * 2))
@@ -1019,7 +1033,20 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
     total_ms = sum(durations)
     times = analyses["times"]
     struct = shot_structure(pairs, idx, times, total_ms)
-    picked = pick_key_frames(pairs, n, key_n, shots=struct["shots"])
+    # shot_structure 的 start/end 是原始帧号；选帧用 idx 下标。重采样时两个空间不同，
+    # 不映射会选出界（--fps 10 时 idx 只有 31 个，镜头却报到 91）。
+    orig2grid = {int(f): g for g, f in enumerate(idx)}
+    shots_grid = []
+    for s in struct["shots"]:
+        t = dict(s)
+        t["start_frame"] = orig2grid.get(int(s["start_frame"]), 0)
+        t["end_frame"] = orig2grid.get(int(s["end_frame"]), len(idx) - 1)
+        shots_grid.append(t)
+    # 先判 swap/drift，再选代表帧——「变化的那一帧」要参与选帧
+    swaps, drifts = content_events(pairs, frames, idx, times)
+    picked = pick_key_frames(pairs, n, key_n, shots=shots_grid,
+                             swaps=swaps, drifts=drifts,
+                             multi_cut=len(struct["transitions"]) > 1)
     keys = [fi for fi, _ in picked]
     reasons = {fi: why for fi, why in picked}
     by_frame = {p["frame"]: p for p in pairs}
@@ -1037,8 +1064,6 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
         p["_grid"] = gd
         p["cells_quiet"] = float((gd < 3).mean())
         p["cells_hard"] = float((gd > 25).mean())
-
-    swaps, drifts = content_events(pairs, frames, idx, times)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     real_keys = [idx[k] for k in keys]
