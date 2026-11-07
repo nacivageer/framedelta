@@ -27,7 +27,7 @@
 ## 做法
 
 1. 人工看全帧写真值：第几秒、几次、什么性质；不写语义（在讲什么不属于 L1/L2）。
-2. 读图方**只看** `runs/eval/<case>/` 里的 `digest.json` + 至多 4 张图，作答同样三项。不看原片段、不看 `truth.json`。
+2. 读图方**只看** `runs/eval/<case>/` 里的 `digest.json` + `digest.budget.k` 张图（≤8s 是 4 张，15 秒是 6 张），作答同样三项。不看原片段、不看 `truth.json`。
 3. 对分：次数一致、时间误差 ≤1s、性质不错 = 命中。`python tools/score.py eval/truth.json <answers.json>`。
 
 读图方必须换一个 agent（自读自答没有意义）。

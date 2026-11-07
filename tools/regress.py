@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """framedelta 回归：三个已知答案的素材 + 规模素材，断言产物与口径。
 
@@ -14,6 +14,7 @@
 """
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -159,8 +160,24 @@ def structural(d):
             bad.append("interval 时长非正：%s–%s" % (iv.get("start_ms"), iv.get("end_ms")))
             break
     kf = d.get("key_frames") or []
-    if not (1 <= len(kf) <= 4):
-        bad.append("代表帧数量 %d 不在 1–4" % len(kf))
+    budget = d.get("budget") or {}
+    if not budget:
+        bad.append("digest 缺 budget（读图方不知道该看几张图、该按什么预算打分）")
+    else:
+        k = budget.get("k")
+        if not isinstance(k, int) or not (1 <= k <= 8):
+            bad.append("budget.k 非法：%r" % k)
+        if budget.get("images") != len(kf):
+            bad.append("budget.images=%r 与代表帧数 %d 不一致" % (budget.get("images"), len(kf)))
+        if not (1 <= len(kf) <= max(4, int(k or 4))):
+            bad.append("代表帧数量 %d 超过预算 %r" % (len(kf), k))
+        # 自适应预算的契约：≤8s 4 张；每超 4s +1（向上取整）；上限 8
+        if budget.get("mode") == "auto" and k and meta.get("duration_ms"):
+            dur = meta["duration_ms"]
+            over = max(0, dur - 8000)
+            want = min(8, 4 + (int(math.ceil(over / 4000.0)) if over else 0))
+            if k != want:
+                bad.append("budget.k=%r 与时长 %dms 推出的 %d 不一致" % (k, dur, want))
     for k in kf:
         if k.get("t_ms") is None or not k.get("reason"):
             bad.append("代表帧缺 t_ms/reason：%r" % k)

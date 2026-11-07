@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """framedelta v1 —— 把一段连续帧压成「可读的变化描述 + 几张能读懂的图」。
 
 只吃路径、只吐文件。语义不在本工具的产出里（见 docs/决策记录.md 的三层分工）。
@@ -42,6 +42,11 @@ ACCENT = (255, 90, 60)
 
 # 阈值集中在一处，写进 digest.json，产物才可复现
 _COARSEN_MIN_TOTAL_MS = 5000   # 只对长片段粗化区间，短片段保持逐段原样
+
+# 代表帧预算（2026-11-08 定）：≤8s 固定 4 张；超过 8s 每 4 秒 +1（向上取整）；上限 8。
+# 15 秒 => 6 张，24 秒起封顶 8 张。k 与实际出图数都写进 digest.budget，读图方按它取预算。
+KEY_BUDGET = {"base": 4, "free_ms": 8000, "per_ms": 4000, "cap": 8}
+KEY_BUDGET_RULE = "≤8s 4 张；超过 8s 后每 4 秒 +1（向上取整）；上限 8"
 
 TH = {
     "repeat_mean_abs_rgb": 1.0,   # 重复帧：整帧 RGB 均值绝对差 < 1.0
@@ -731,6 +736,33 @@ def shot_structure(pairs, idx, times, total_ms):
     return {"transitions": transitions, "shots": shots}
 
 
+def key_budget(total_ms: float, key_n: int | None = None) -> dict:
+    """代表帧预算：k 由时长推出来（或由 --key 写死），并把推法一并交出去。
+
+    「≤4 张图」的约定只对短片段成立；15 秒的片段 4 张图一张要代表 3–4 秒，
+    读图方会漏掉长镜头中段。预算随长度长、但**必须写进产物**，
+    否则读图方和打分脚本各自猜一个数，token 账就不可复现了。
+    """
+    total_ms = max(0.0, float(total_ms))
+    if key_n:
+        k = max(1, int(key_n))
+        return {"k": k, "mode": "fixed", "duration_ms": int(total_ms),
+                "rule": "--key 写死；自适应规则不适用"}
+    free, per, cap, base = (KEY_BUDGET["free_ms"], KEY_BUDGET["per_ms"],
+                            KEY_BUDGET["cap"], KEY_BUDGET["base"])
+    over = max(0.0, total_ms - free)
+    extra = int(math.ceil(over / per)) if over else 0
+    k = min(cap, base + extra)
+    derivation = (f"{int(total_ms)}ms ≤ {free}ms → {base} 张" if not over else
+                  f"{int(total_ms)}ms；超出 {free}ms 共 {int(over)}ms"
+                  f" → {base} + ceil({int(over)}/{per}) = {k}"
+                  + ("（封顶）" if base + extra > cap else ""))
+    return {
+        "k": k, "mode": "auto", "duration_ms": int(total_ms), "rule": KEY_BUDGET_RULE,
+        "derivation": derivation,
+    }
+
+
 def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
                     multi_cut=False):
     """L2 闸门：把时间轴切成 k 段，每段挑一个最有信息量的帧。"""
@@ -1090,7 +1122,7 @@ def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
 # 主流程
 # --------------------------------------------------------------------------
 
-def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
+def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None,
           cell_w=180):
     frames, durs, loop = load_frames(input_path, fps)
     ext = input_path.suffix.lower()
@@ -1134,7 +1166,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
         shots_grid.append(t)
     # 先判 swap/drift，再选代表帧——「变化的那一帧」要参与选帧
     swaps, drifts = content_events(pairs, frames, idx, times)
-    picked = pick_key_frames(pairs, n, key_n, shots=shots_grid,
+    budget = key_budget(total_ms, key_n)
+    picked = pick_key_frames(pairs, n, budget["k"], shots=shots_grid,
                              swaps=swaps, drifts=drifts,
                              multi_cut=len(struct["transitions"]) > 1)
     keys = [fi for fi, _ in picked]
@@ -1157,6 +1190,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
 
     out_dir.mkdir(parents=True, exist_ok=True)
     real_keys = [idx[k] for k in keys]
+    # 预算 k 与实出图数一起交出去：去重补位可能补不满，读图方要知道「本来该有几张」
+    budget = {**budget, "images": len(keys)}
 
     # meta.json
     meta = {
@@ -1176,6 +1211,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
         "pair_interval_ms_mean": round((times[-1] - times[0]) / max(1, len(idx) - 1), 1)
         if len(idx) > 1 else None,
         "analysis_scale": list(analyses["wh"]),
+        "key_budget": budget,
         "thresholds": TH,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
@@ -1234,6 +1270,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
         "meta": {"frames": n, "duration_ms": int(total_ms),
                  "fps": meta["fps"], "repeat_frames": repeats,
                  "analysed": len(idx)},
+        "budget": budget,
         "thresholds": TH,
         "counts": {
             "pairs": len(pairs),
@@ -1279,7 +1316,8 @@ def main(argv=None):
     ap.add_argument("--fps", type=float, default=None, help="按此 fps 重采样")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--out", default=None, help="输出目录（默认 runs/<名字>）")
-    ap.add_argument("--key", type=int, default=4, help="代表帧数量（默认 4）")
+    ap.add_argument("--key", type=int, default=None,
+                    help="代表帧数量；不传则按时长自适应（≤8s 4 张，每超 4s +1，上限 8）")
     ap.add_argument("--cell-w", type=int, default=180, help="总览单格宽度")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args(argv)
@@ -1295,6 +1333,7 @@ def main(argv=None):
             "out": str(out), "frames": meta["frames"], "fps": meta["fps"],
             "duration_ms": meta["duration_ms"], "repeat_frames": meta["repeat_frames"],
             "counts": digest["counts"],
+            "budget": digest["budget"],
             "key_frames": [k["frame"] for k in digest["key_frames"]],
             "hotspot": digest["hotspot"],
         }, ensure_ascii=False, indent=2))
