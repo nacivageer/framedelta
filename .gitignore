@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 产物目录
+runs/
+out/
+tmp/
+
+# 测试媒体不进 Git（源文件在桌面，路径记录在 docs/决策记录.md）
+*.gif
+*.mp4
+*.webm
+
+# 编辑器
+.vscode/
+.idea/
