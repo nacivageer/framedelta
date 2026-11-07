@@ -1,0 +1,23 @@
+{
+  "arm": "framedelta-products-v3",
+  "note": "第三轮：digest 增加 swap / drift 两类事件，代表帧含切点前后两帧。读图方 subagent 3fe78759，只看 runs/eval/{e4_b,e6_d}/。2026-11-07",
+  "e4_b": {
+    "count": 1,
+    "changes": [
+      {"t_s": 0.6, "what": "整屏硬切：从深色标题页（大标题「破甲之后 / 你还会听我的话吗」+右侧立绘+底部小字+字幕条）换成纯文字页（左侧一个大「会」字+一行小字「但这个字，不该让人高兴」，底部字幕内容也换掉）"}
+    ],
+    "confidence": "high",
+    "evidence": "jumps=1, swaps=0, drifts=0；jumps[0] frame17 t_ms=561, changed_frac=0.174, ncc=0.276, energy=21.6；shots 0–528ms 与 594–2970ms 的 energy_mean 都是 0.00，整段只有这一处变化；annotated #16→#17 与 sheet 第 16/17 格肉眼可见换页"
+  },
+  "e6_d": {
+    "count": 4,
+    "changes": [
+      {"t_s": 0.4, "what": "画面左下角浮出一个带边框的深色窗口（内含多行彩色小块，像终端或表格截图），并放大到约占左下四分之一"},
+      {"t_s": 0.9, "what": "整体换页：第一张幻灯片横移淡出，换成第二张（大字「Agent 不等于 模型」），左下窗口内容消失"},
+      {"t_s": 1.7, "what": "同一页上图形整体位移换形：出现 Agent Behavior / Model / Harness / Tool Policy / Sandbox 的方框与连线图，标题下多出一行副标题"},
+      {"t_s": 2.7, "what": "整屏硬切到收尾页：浅色背景的「DeepSeek Harness — 现在，开始用」，中间一个浏览器/终端窗口截图与按钮"}
+    ],
+    "confidence": "medium",
+    "evidence": "drifts 两条：297–462ms（changed_frac 0.239，之后 495–792ms 静稳）与 825–990ms（0.276，含 dx≈-3.1 的 motion 段）；jumps 仅 1 条 frame82 t_ms=2706（changed_frac 0.663、ncc 0.189）；flow 第 50 对（1650ms）motion、dx=-2.98 dy=+6.54、local_mag 8.97，判为一次可见变化（最不确定的一处）"
+  }
+}

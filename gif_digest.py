@@ -55,6 +55,22 @@ TH = {
     "spike_factor": 1.5,          # 突变必须是邻域尖峰：hsv ≥ factor×邻域中位数 + offset
     "spike_offset": 3.0,
     "transition_gap_ms": 250,     # 相邻突变间隔小于此值 → 同一次转场
+    # 内容替换（布局不变、大块内容换）：尖峰规则看不见这类
+    "swap_changed_frac": 0.30,
+    "swap_ncc": 0.80,
+    "swap_energy": 8.0,
+    "swap_disp_px": 1.5,
+    "swap_scale": 0.02,
+    "swap_local_frac": 0.10,      # 有局部运动的块占比上限：内容替换时屏是静的
+    "swap_nb_hsv": 10.0,          # 前后邻居必须安静（屏幕本来是静的）
+    "swap_nb_energy": 6.0,
+    # 累积变化（连续中等变化合成一次可见变化）
+    "drift_min_pairs": 5,
+    "drift_hsv_lo": 4.0,
+    "drift_hsv_hi": 18.0,
+    "drift_total_frac": 0.20,     # 首尾两帧的变化面积下限
+    "drift_settle_energy": 3.0,   # 变化前后都要静下来
+    "drift_settle_pairs": 4,
 }
 
 
@@ -409,13 +425,125 @@ def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE, classify=True):
         pairs.append({
             "frame": k, "t_ms": float(times[k]), "t_start_ms": float(times[k - 1]),
             "hsv": sc_hsv, "ncc": ncc,
-            "energy": energy, "changed_frac": changed, "kind": "motion",
+            "energy": energy, "changed_frac": changed,
+            # 强差面积：|差|>40 的像素占比。整块内容被换掉时它高；整体平移/调色时它低得多
+            "hard_frac": float((diff > 40).mean()),
+            "kind": "motion",
             "motion": mot,
         })
     if classify:
         classify_pairs(pairs, TH)
     return {
         "idx": idx, "times": times, "wh": wh, "grays": grays, "pairs": pairs,
+    }
+
+
+def content_events(pairs, frames, idx, times, th=None):
+    """两类尖峰规则看不见的变化。
+
+    - **swap**：布局不变、内容大块替换（文字块换、图片换）。判据是大面积变化的**孤立性**：
+      前后邻居都安静（屏幕本来是静的），全局几乎没有位移，结构相关性仍高。
+      相机运动会让邻居一起动，游戏片段因此不会命中（实测 3 段游戏/火焰素材 0 次）。
+    - **drift**：连续多帧中等幅度变化累积成的一次可见变化（层滑入、淡入、运镜后停住）。
+      判据是「变化前静、变化后也静」——尖峰规则要求相对邻域是尖峰，这类永远判不出来。
+    """
+    th = {**TH, **(th or {})}
+    hs = [p["hsv"] for p in pairs]
+    ens = [p["energy"] for p in pairs]
+    swaps = []
+    for i, p in enumerate(pairs):
+        if p["kind"] == "jump":
+            continue
+        m = p["motion"] or {}
+        disp = math.hypot(m.get("dx", 0.0), m.get("dy", 0.0))
+        if p["changed_frac"] < th["swap_changed_frac"] or p["ncc"] < th["swap_ncc"]:
+            continue
+        if p["energy"] < th["swap_energy"] or disp > th["swap_disp_px"]:
+            continue
+        if abs(m.get("scale", 1.0) - 1.0) > th["swap_scale"]:
+            continue
+        # 局部不能有运动：内容替换是「屏不动、内容换」；游戏里那一帧会有 29% 的块在动（秋水 10160ms）
+        if m.get("local_frac", 0.0) > th["swap_local_frac"]:
+            continue
+        nb = [j for j in range(max(0, i - 3), min(len(pairs), i + 4)) if j != i]
+        if not nb:
+            continue
+        nb_hsv = float(np.median([hs[j] for j in nb]))
+        nb_energy = float(np.median([ens[j] for j in nb]))
+        if nb_hsv >= th["swap_nb_hsv"] or nb_energy >= th["swap_nb_energy"]:
+            continue
+        swaps.append({
+            "frame": p["frame"], "t_ms": round(p["t_ms"], 1),
+            "changed_frac": round(p["changed_frac"], 3),
+            "ncc": round(p["ncc"], 3), "energy": round(p["energy"], 2),
+            "neighbour_hsv": round(nb_hsv, 2), "neighbour_energy": round(nb_energy, 2),
+            "dx_px": round(m.get("dx", 0.0), 2), "dy_px": round(m.get("dy", 0.0), 2),
+        })
+
+    drifts = []
+    run = []
+
+    def flush(cur):
+        if len(cur) < th["drift_min_pairs"]:
+            return
+        k0, k1 = cur[0][0], cur[-1][0]
+        n_settle = th["drift_settle_pairs"]
+        before = ens[max(0, k0 - n_settle):k0]
+        after = ens[k1 + 1:k1 + 1 + n_settle]
+        if before and float(np.median(before)) >= th["drift_settle_energy"]:
+            return
+        if after and float(np.median(after)) >= th["drift_settle_energy"]:
+            return
+        d = _drift_from_run([p for _, p in cur], frames, idx, times, th)
+        if d and d["changed_frac"] >= th["drift_total_frac"]:
+            drifts.append(d)
+
+    for i, p in enumerate(pairs):
+        if p["kind"] == "jump":
+            flush(run)
+            run = []
+            continue
+        if th["drift_hsv_lo"] <= p["hsv"] < th["drift_hsv_hi"]:
+            run.append((i, p))
+        else:
+            flush(run)
+            run = []
+    flush(run)
+
+    # 已经被判成 swap 的单帧不再重复算进 drift
+    swap_frames = {s["frame"] for s in swaps}
+    for d in drifts:
+        d["swap_inside"] = sum(1 for f in range(d["start_frame"], d["end_frame"] + 1)
+                               if f in swap_frames)
+    return swaps, drifts
+
+
+def _drift_from_run(run, frames, idx, times, th):
+    """一段连续中等变化：用首尾两帧的差分来确认「累积成了可见变化」。"""
+    f0, f1 = run[0]["frame"], run[-1]["frame"]
+    if f0 - 1 < 0 or f1 >= len(idx):
+        return None
+    a, b = frames[idx[f0 - 1]], frames[idx[f1]]
+    d = np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()
+    ga, gb = rgb_to_hsv(grid_rgb(a)), rgb_to_hsv(grid_rgb(b))
+    dh = np.abs(ga[..., 0] - gb[..., 0])
+    hue = np.minimum(dh, 255.0 - dh)
+    wgt = np.minimum(ga[..., 1], gb[..., 1]) / 255.0
+    gd = (hue * wgt + np.abs(ga[..., 1] - gb[..., 1]) + np.abs(ga[..., 2] - gb[..., 2])) / 3.0
+    p = run[-1]["motion"] or {}
+    return {
+        "start_frame": f0, "end_frame": f1,
+        "start_ms": round(float(times[f0 - 1]), 1), "end_ms": round(float(times[f1]), 1),
+        "duration_ms": round(float(times[f1] - times[f0 - 1]), 1),
+        "pairs": len(run),
+        "hsv_mean": round(float(np.mean([q["hsv"] for q in run])), 2),
+        "hsv_max": round(float(max(q["hsv"] for q in run)), 2),
+        "energy_mean": round(float(np.mean([q["energy"] for q in run])), 2),
+        "changed_frac": round(float((np.abs(a.astype(np.int16) - b.astype(np.int16)) > 12).mean()), 3),
+        "delta_energy": round(float(d), 2),
+        "hard_cells": round(float((gd > 25).mean()), 3),
+        "quiet_cells": round(float((gd < 3).mean()), 3),
+        "disp_px": round(math.hypot(p.get("dx", 0.0), p.get("dy", 0.0)), 2),
     }
 
 
@@ -907,6 +1035,10 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
               + np.abs(ha[..., 2] - hb[..., 2])) / 3.0
         gd = np.where(np.maximum(ha[..., 2], hb[..., 2]) < 8, 0.0, gd)
         p["_grid"] = gd
+        p["cells_quiet"] = float((gd < 3).mean())
+        p["cells_hard"] = float((gd > 25).mean())
+
+    swaps, drifts = content_events(pairs, frames, idx, times)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     real_keys = [idx[k] for k in keys]
@@ -938,7 +1070,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
     with (out_dir / "flow.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["pair", "from_frame", "to_frame", "t_ms", "kind", "hsv_score", "ncc",
-                    "coherence", "energy", "changed_frac", "dx_px", "dy_px", "scale",
+                    "coherence", "energy", "changed_frac", "hard_frac", "dx_px", "dy_px", "scale",
                     "resid_px", "valid_blocks", "local_mag_px", "local_mag_mean_px", "local_frac"])
         for p in pairs:
             m = p["motion"]
@@ -947,6 +1079,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
                         f"{m['coherence']:.3f}" if m else "",
                         f"{p['energy']:.2f}",
                         f"{p['changed_frac']:.3f}",
+                        f"{p.get('hard_frac', 0.0):.3f}",
                         f"{m['dx']:.2f}" if m else "", f"{m['dy']:.2f}" if m else "",
                         f"{m['scale']:.4f}" if m else "",
                         f"{m['resid']:.2f}" if m else "", m["valid"] if m else "",
@@ -993,8 +1126,12 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
             "subtle": sum(1 for p in pairs if p["kind"] == "subtle"),
             "motion": sum(1 for p in pairs if p["kind"] == "motion"),
             "jumps": len(jumps),
+            "swaps": len(swaps),
+            "drifts": len(drifts),
         },
         "jumps": jumps,
+        "swaps": swaps,
+        "drifts": drifts,
         "transitions": transitions,
         "shots": shots,
         "intervals": intervals,

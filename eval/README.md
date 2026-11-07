@@ -33,7 +33,7 @@
 
 ## 结果
 
-见 `docs/决策记录.md` 的「评测（L2/L3 端到端）」一节。第二轮起产物自带 `Δarea`（每张代表帧相对上一帧的变化像素占比，`annotated.png` 头行、`sheet.png` 每格、`digest.key_frames[].delta` 三处一致），读图方不必自己比像素。
+见 `docs/决策记录.md` 的「评测（L2/L3 端到端）」一节。第二轮起产物自带 `Δarea`（每张代表帧相对上一帧的变化像素占比，`annotated.png` 头行、`sheet.png` 每格、`digest.key_frames[].delta` 三处一致）；第三轮起 `digest.json` 多两类事件：`swaps`（布局不变的大块内容替换）与 `drifts`（连续中等变化累积成的一次变化）。
 
 ## 重跑
 

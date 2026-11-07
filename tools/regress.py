@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """framedelta 回归：三个已知答案的素材 + 规模素材，断言产物与口径。
 
@@ -41,6 +41,8 @@ KNOWN = [
             "meta.repeat_frames": 0,
             "counts.jumps": 0,
             "counts.subtle": 5,
+            "counts.swaps": 0,
+            "counts.drifts": 0,
             "len.transitions": 0,
             "len.shots": 1,
         },
@@ -57,6 +59,8 @@ KNOWN = [
             "meta.repeat_frames": 25,
             "counts.jumps": 16,
             "counts.still": 25,
+            "counts.swaps": 0,
+            "counts.drifts": 0,
             "len.transitions": 3,
             "len.shots": 4,
         },
@@ -71,13 +75,15 @@ SCALE = [
         "name": "qiushui",
         "src": os.path.join(DESKTOP, "秋水传送bug.gif"),
         "args": [],
-        "base": {"meta.frames": 192, "counts.jumps": 6, "len.transitions": 3, "len.shots": 3},
+        "base": {"meta.frames": 192, "counts.jumps": 6, "len.transitions": 3, "len.shots": 3,
+                 "counts.swaps": 0, "counts.drifts": 0},
     },
     {
         "name": "qingxiao",
         "src": os.path.join(DESKTOP, "清宵bug.gif"),
         "args": [],
-        "base": {"meta.frames": 312, "counts.jumps": 32, "len.transitions": 15, "len.shots": 16},
+        "base": {"meta.frames": 312, "counts.jumps": 32, "len.transitions": 15, "len.shots": 16,
+                 "counts.swaps": 0, "counts.drifts": 1},
     },
 ]
 
