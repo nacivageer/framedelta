@@ -557,8 +557,10 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
     prio = {0: (2.4, "first"), n - 1: (2.2, "last")}
     for p in pairs:
         if p["kind"] == "jump":
-            for fi, why, base in ((p["frame"] - 1, "before_jump", 1.0),
-                                  (p["frame"], "after_jump", 1.2)):
+            # 突变帧优先于镜头能量峰值：漏掉它，annotated 上就只剩 Δarea 0% 的帧，
+            # 读图方会以为这段没变化（评测 e4 就是这样：跳变在 0.56s，四张图全是 0%）。
+            for fi, why, base in ((p["frame"] - 1, "before_jump", 2.7),
+                                  (p["frame"], "after_jump", 3.0)):
                 if 0 <= fi < n and prio.get(fi, (0, ""))[0] < base:
                     prio[fi] = (base, why)
     ranked = sorted((p for p in pairs if p["kind"] in ("motion", "subtle")),
@@ -580,6 +582,32 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
                     2.6 > prio.get(best["frame"], (0, ""))[0]:
                 prio[best["frame"]] = (2.6, "shot_peak")
 
+    # 有多个镜头时按镜头分槽：否则「切点前」和「切点后」会挤在同一段时间切片里，
+    # 只能二选一——评测 e4 就是这样把切点前的画面丢掉，四张图全是 Δarea 0%。
+    if shots and 2 <= len(shots) <= k:
+        # 镜头结构把突变那一帧排除在两侧镜头之外（shot1 结束于 jump-1，shot2 始于 jump+1），
+        # 分配前把它并入后一个镜头，否则「切点后的第一帧」永远选不到。
+        ranges = [[s["start_frame"], s["end_frame"]] for s in shots]
+        jumps_at = {p["frame"] for p in pairs if p["kind"] == "jump"}
+        for i in range(1, len(ranges)):
+            if ranges[i][0] - 1 in jumps_at:
+                ranges[i][0] -= 1
+        lengths = [b - a + 1 for a, b in ranges]
+        alloc = [1] * len(ranges)
+        for _ in range(k - len(ranges)):
+            i = max(range(len(ranges)), key=lambda j: lengths[j] / alloc[j])
+            alloc[i] += 1
+        picked = []
+        for (lo, hi), cnt in zip(ranges, alloc):
+            picked += _pick_in_range(prio, lo, hi, cnt)
+        seen, out = set(), []
+        for fi, why in picked:
+            if fi not in seen:
+                seen.add(fi)
+                out.append((fi, why))
+        if len(out) >= 2:
+            return sorted(out)
+
     chosen = []
     for b in range(k):
         lo = int(round(b * n / k))
@@ -596,6 +624,23 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None):
             seen.add(fi)
             out.append((fi, why))
     return sorted(out)
+
+
+def _pick_in_range(prio, lo, hi, cnt):
+    """在 [lo, hi] 里按优先级挑 cnt 个，彼此至少隔开一段（避免两张图几乎一样）。"""
+    cands = sorted(((pr, fi, why) for fi, (pr, why) in prio.items() if lo <= fi <= hi),
+                   key=lambda c: (-c[0], c[1]))
+    span = hi - lo + 1
+    min_gap = max(1, span // (cnt * 2))
+    out = []
+    for pr, fi, why in cands:
+        if len(out) >= cnt:
+            break
+        if all(abs(fi - x) >= min_gap for x, _ in out):
+            out.append((fi, why))
+    if not out:
+        out.append((lo, "segment_start"))
+    return out
 
 
 def hotspot(pairs, wh=None, pairs_skip_jump=True):
@@ -647,7 +692,8 @@ def _fit(im: Image.Image, box_w: int, box_h: int):
 
 
 def render_sheet(frames, durs, idx, times, key_grid, out: Path,
-                 max_cells=36, cell_w=180):
+                 max_cells=36, cell_w=180, delta_by_grid=None):
+    delta_by_grid = delta_by_grid or {}
     n = len(idx)
     grid_all = list(range(n))
     if n > max_cells:
@@ -673,6 +719,9 @@ def render_sheet(frames, durs, idx, times, key_grid, out: Path,
         t = float(times[g]) / 1000
         tag = f"{idx[g]:d}  {t:5.2f}s"
         is_key = g in key_grid
+        dlt = delta_by_grid.get(g)
+        if dlt is not None:
+            tag += f"  Δ{dlt * 100:.0f}%"
         dr.text((x, y + ch + 3), tag, font=f, fill=FG if is_key else DIM)
         if is_key:
             dr.rectangle([x - 1, y - 1, x + cw, y + ch], outline=ACCENT, width=2)
@@ -729,7 +778,11 @@ def _arrow(dr: ImageDraw.ImageDraw, x0, y0, x1, y1, color, width=2, head=6):
 
 
 def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
-    """3–4 代表帧，各配一帧的实测位移场箭头（grid 下标 → 原帧）。"""
+    """3–4 代表帧，各配「相对上一帧变了多少」+ 实测位移场箭头（grid 下标 → 原帧）。
+
+    每格头一行固定给 Δarea（变化面积占比）与全局位移：读图方据此分辨
+    「整幅换画」与「一小块 UI 更新」，不必自己比像素。
+    """
     by_frame = {p["frame"]: p for p in analyses["pairs"]}
     cell_w = 430
     h0, w0 = frames[idx[key_grid[0]]].shape[:2]
@@ -744,7 +797,8 @@ def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
     canvas = Image.new("RGB", (W, Hh), BG)
     dr = ImageDraw.Draw(canvas)
     f, fs = _font(12), _font(11)
-    dr.text((pad, 8), "annotated · arrows = block displacement > 0.5px (x3), orange = <2px",
+    dr.text((pad, 8), "annotated · Δarea = pixels changed vs previous frame · "
+                      "arrows = block displacement > 0.5px (x3)",
             font=_font(13), fill=FG)
     for i, g in enumerate(key_grid):
         fi = idx[g]
@@ -754,47 +808,51 @@ def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
         canvas.paste(im, (x, y))
         dr.rectangle([x - 1, y - 1, x + cw, y + ch], outline=(50, 56, 62))
         p = by_frame.get(g)
-        if p and p["kind"] != "jump" and p["motion"]:
-            m = p["motion"]
-            show_arrows = m["local_frac"] >= 0.05 and m["local_mag"] >= 0.05
-            gh, gw = analyses["grays"][g].shape if g < len(analyses["grays"]) else (0, 0)
-            if show_arrows and gw and gh:
-                sx, sy = cw / gw, ch / gh
-                pts, fld, wts = m["pts"], m["field"], m["field_w"]
-                for (px, py), (dx, dy), w in zip(pts, fld, wts):
-                    if w <= 0:
-                        continue
-                    mag = math.hypot(dx, dy)
-                    if mag < 0.5:
-                        continue
-                    x0, y0 = x + px * sx, y + py * sy
-                    x1, y1 = x0 + dx * sx * 3.0, y0 + dy * sy * 3.0
-                    col = ACCENT if mag > 2 else (255, 170, 90)
-                    _arrow(dr, x0, y0, x1, y1, col, width=2)
-            t = times[g] / 1000
-            dr.text((x, y + ch + 4),
-                    f"#{fi}  {t:.2f}s  global dx{m['dx']:+.2f} dy{m['dy']:+.2f} "
-                    f"x{m['scale']:.3f}", font=f, fill=FG)
-            note = "" if show_arrows else "  (below noise)"
-            dr.text((x, y + ch + 21),
-                    f"local {m['local_mag']:.2f}px · {m['local_frac']*100:.0f}% blocks · "
-                    f"resid {m['resid']:.2f}px{note}",
-                    font=fs, fill=DIM)
-        elif p:
-            t = times[g] / 1000
-            m = p["motion"]
-            extra = ""
-            if m:
-                extra = (f"  Δcells {p['changed_frac']*100:.0f}% · coh {m['coherence']:.2f}"
-                         f" · resid {m['resid']:.1f}px" if m["resid"] == m["resid"]
-                         else f"  Δcells {p['changed_frac']*100:.0f}%")
-            dr.text((x, y + ch + 4), f"#{fi}  {t:.2f}s   jump{extra}", font=f, fill=FG)
-            dr.text((x, y + ch + 21),
-                    f"hsv {p['hsv']:.1f} · ncc {p['ncc']:.2f} · energy {p['energy']:.1f}",
-                    font=fs, fill=DIM)
+        t = times[g] / 1000
+        if not p:
+            dr.text((x, y + ch + 4), f"#{fi}  {t:.2f}s  Δarea —", font=f, fill=FG)
+            dr.text((x, y + ch + 21), "first frame (no previous)", font=fs, fill=DIM)
+            continue
+
+        m = p["motion"] or {}
+        frac = p["changed_frac"] * 100
+        head = f"#{fi}  {t:.2f}s  Δarea {frac:.0f}%"
+        if m:
+            head += f"  dx{m.get('dx', 0):+.2f} dy{m.get('dy', 0):+.2f} x{m.get('scale', 1):.3f}"
+        dr.text((x, y + ch + 4), head, font=f, fill=FG)
+
+        if p["kind"] == "jump":
+            line2 = f"jump · hsv {p['hsv']:.1f} · ncc {p['ncc']:.2f} · energy {p['energy']:.1f}"
+            if m.get("resid") == m.get("resid"):
+                line2 += f" · resid {m['resid']:.1f}px"
+            dr.text((x, y + ch + 21), line2, font=fs, fill=DIM)
+            continue
+
+        show_arrows = bool(m) and m["local_frac"] >= 0.05 and m["local_mag"] >= 0.05
+        gh, gw = analyses["grays"][g].shape if g < len(analyses["grays"]) else (0, 0)
+        if show_arrows and gw and gh:
+            sx, sy = cw / gw, ch / gh
+            pts, fld, wts = m["pts"], m["field"], m["field_w"]
+            for (px, py), (dx, dy), w in zip(pts, fld, wts):
+                if w <= 0:
+                    continue
+                mag = math.hypot(dx, dy)
+                if mag < 0.5:
+                    continue
+                x0, y0 = x + px * sx, y + py * sy
+                x1, y1 = x0 + dx * sx * 3.0, y0 + dy * sy * 3.0
+                col = ACCENT if mag > 2 else (255, 170, 90)
+                _arrow(dr, x0, y0, x1, y1, col, width=2)
+        if m:
+            line2 = (f"{p['kind']} · local {m['local_mag']:.2f}px · "
+                     f"{m['local_frac']*100:.0f}% blocks · resid {m['resid']:.2f}px")
+            if frac < 2:
+                line2 += " · tiny area"
+            elif not show_arrows:
+                line2 += " · no coherent motion"
         else:
-            t = times[g] / 1000
-            dr.text((x, y + ch + 4), f"#{fi}  {t:.2f}s   first frame (no flow)", font=f, fill=FG)
+            line2 = f"{p['kind']} · energy {p['energy']:.1f}"
+        dr.text((x, y + ch + 21), line2, font=fs, fill=DIM)
     canvas.save(out)
 
 
@@ -836,6 +894,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
     picked = pick_key_frames(pairs, n, key_n, shots=struct["shots"])
     keys = [fi for fi, _ in picked]
     reasons = {fi: why for fi, why in picked}
+    by_frame = {p["frame"]: p for p in pairs}
 
     # 每个 pair 的逐格变化（给 hotspot 用，与 hsv_score 同口径）
     for p in pairs:
@@ -896,7 +955,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
                         f"{m.get('local_frac', 0):.3f}" if m else ""])
 
     render_sheet(frames, durations, idx, times, set(keys), out_dir / "sheet.png",
-                 cell_w=cell_w)
+                 cell_w=cell_w,
+                 delta_by_grid={p["frame"]: p["changed_frac"] for p in pairs})
     render_kymograph(frames, idx, analyses["grays"], pairs, out_dir / "kymograph.png")
     render_annotated(frames, idx, times, keys, analyses, out_dir / "annotated.png")
 
@@ -939,9 +999,20 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
         "shots": shots,
         "intervals": intervals,
         "hotspot": hot,
-        "key_frames": [{"frame": idx[g], "t_ms": round(float(times[g]), 1),
-                        "reason": reasons.get(g, "selected")}
-                       for g in keys],
+        "key_frames": [
+            # 每张代表帧都带「相对上一帧」的量化：读图方据此判「整幅换画」还是「小块更新」，
+            # 这是评测里 e5 误报（把 <1% 的面板更新读成弹出卡片）的直接对策。
+            dict([("frame", idx[g]), ("t_ms", round(float(times[g]), 1)),
+                  ("reason", reasons.get(g, "selected"))] +
+                 ([("delta", {"kind": by_frame[g]["kind"],
+                              "changed_frac": round(by_frame[g]["changed_frac"], 3),
+                              "dx_px": round((by_frame[g]["motion"] or {}).get("dx", 0.0), 2),
+                              "dy_px": round((by_frame[g]["motion"] or {}).get("dy", 0.0), 2),
+                              "scale": round((by_frame[g]["motion"] or {}).get("scale", 1.0), 3),
+                              "local_mag_px": round(
+                                  (by_frame[g]["motion"] or {}).get("local_mag", 0.0), 2)})]
+                  if g in by_frame else []))
+            for g in keys],
         "artifacts": ["meta.json", "sheet.png", "flow.csv", "kymograph.png",
                       "annotated.png", "digest.json"],
     }

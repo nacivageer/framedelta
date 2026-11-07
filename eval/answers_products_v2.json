@@ -1,0 +1,29 @@
+{
+  "arm": "framedelta-products-v2",
+  "note": "第二轮：产物已带 Δarea（annotated 头行 / sheet 每格 / digest.key_frames[].delta）。读图方 subagent 68c9513b，只看 runs/eval/{e2_ui,e5_c,e6_d}/。2026-11-07",
+  "e2_ui": {
+    "count": 2,
+    "changes": [
+      {"t_s": 1.4, "what": "画面左侧大标题块整体消失：「20,000+」「一个本地跑的音频分析插件」连同两行小字一起撤掉，只剩深蓝渐变背景与底部字幕"},
+      {"t_s": 1.7, "what": "整屏换到下一张幻灯片：约 56% 像素重绘，左上出现「这期三件事」标题与一条小字条目，约 0.2 秒淡入稳定"}
+    ],
+    "confidence": "high",
+    "evidence": "digest intervals 1.353–1.386s subtle（changed_frac 0.074）+ 1.683–1.716s motion（changed_frac 0.557）；annotated #42/#52 与 sheet 帧 42→52 对照；0.363s subtle（0.022）只是底部字幕换字，未计入"
+  },
+  "e5_c": {
+    "count": 0,
+    "changes": [],
+    "confidence": "medium",
+    "evidence": "jumps 为空、counts.motion=0、hotspot=null，85/89 对为 still，最大 energy 2.84、最大 changed_frac 0.034；annotated #0/#22/#45/#89 画面一致，只有底部字幕在变；kymograph 全带基本恒定"
+  },
+  "e6_d": {
+    "count": 3,
+    "changes": [
+      {"t_s": 0.3, "what": "密布图标的桌面/截图从画面中部滑出并叠在原幻灯片上，右侧仍露出原幻灯片，两层同屏"},
+      {"t_s": 1.0, "what": "叠加的桌面退去，整屏转为近乎全黑的新幻灯片，1.0–1.2 秒淡入「Agent 不等于 模型」标题与右侧「Harness」小框"},
+      {"t_s": 2.7, "what": "硬切到产品落地页：深蓝背景光带 +「DeepSeek Harness」标题，右下深色终端窗口"}
+    ],
+    "confidence": "medium",
+    "evidence": "jumps 1 条（frame 82 / 2706ms，ncc 0.189、changed_frac 0.663、energy 32.72）；0.297–0.495 与 0.792–0.99 的 subtle/motion 对应图标层滑入/退出；1.617–1.65s motion（dx -2.98、dy +6.54、local_mag 8.97、82% blocks）判为整屏位移、幻灯片内容未换，故未计入"
+  }
+}
