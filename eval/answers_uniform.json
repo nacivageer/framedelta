@@ -1,0 +1,21 @@
+{
+  "arm": "uniform-8",
+  "note": "读图方 subagent 89e0357d，只给 runs/eval/_uniform/{e1_slides,e6_d}.png（时间均匀 8 帧，帧名带 #frameNNN@毫秒），不看原片段。2026-11-07",
+  "e1_slides": {
+    "count": 1,
+    "changes": [{"t_s": 2.4, "what": "整页幻灯片内容整体消失：左侧大标题「发一张 GIF，直接问。」、说明文字与右侧演示面板一起不见，只剩白底页眉「DSH PLUGIN」和左下角页脚，页面变成空白"}],
+    "confidence": "high",
+    "why": "frame066@2178ms 仍是完整标题＋右侧演示面板；frame077@2541ms 同一版面整片空白（标题区像素差 0.0–0.5，6→7 骤升到 24.9，右侧演示区 9.5→68.1）"
+  },
+  "e6_d": {
+    "count": 4,
+    "changes": [
+      {"t_s": 0.2, "what": "画面左下方盖上来一个 Windows 文件资源管理器窗口（图标网格＋左侧导航），遮住幻灯片下半部"},
+      {"t_s": 1.0, "what": "资源管理器窗口消失，幻灯片从「这段视频讨论的是 Harness，不是“破解模型”」切换为「Agent 不等于 模型」，1089ms 那帧正处在旧页残影＋新页淡入的过渡态"},
+      {"t_s": 1.7, "what": "画面顶部出现浏览器标签栏、底部出现 Windows 任务栏，视频区域被上下夹住"},
+      {"t_s": 2.0, "what": "新页中间的「Harness」空面板被填入多行文字（Agent Prompt / Process / Tool Policy 等）"}
+    ],
+    "confidence": "medium",
+    "why": "四段分别落在 frame000@0ms→frame011@363ms、frame022@726ms→frame033@1089ms、frame044@1452ms→frame055@1815ms、frame055@1815ms→frame066@2178ms；6→7 变化极小（0.54），不计"
+  }
+}

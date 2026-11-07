@@ -1,0 +1,41 @@
+{
+  "arm": "framedelta-products",
+  "note": "读图方 subagent 08e64d92，只看 runs/eval/<case>/ 的 digest.json + 至多 4 张图（annotated/sheet/kymograph、必要处看 flow.csv），不看原片段。2026-11-07",
+  "e1_slides": {
+    "count": 1,
+    "changes": [{"t_s": 2.5, "what": "整页幻灯片切换：左侧「发一张 GIF，直接问。」标题+说明块与右侧内嵌动图整体替换为白底页「它读出了动作变化。」"}],
+    "confidence": "high"
+  },
+  "e2_ui": {
+    "count": 2,
+    "changes": [
+      {"t_s": 1.4, "what": "左上方三行大字整块消失，只剩深蓝背景光晕与角落水印"},
+      {"t_s": 2.2, "what": "左上方淡入新标题「这期三件事」及其小字，约 2.7s 变实"}
+    ],
+    "confidence": "high"
+  },
+  "e3_a": {
+    "count": 1,
+    "changes": [{"t_s": 1.0, "what": "暗调场景淡出到近全黑，随即淡入亮调新场景（戴耳机、左右「啊啊啊」「听不清!」、音符与彩色声波），属叠化换场"}],
+    "confidence": "high"
+  },
+  "e4_b": {
+    "count": 1,
+    "changes": [{"t_s": 0.6, "what": "整页替换：标题页「破甲之后 你还会听我的话吗」+ 立绘 + 三行小字，变成黑底大字卡「会 / 但这个词，不该让人高兴」"}],
+    "confidence": "high"
+  },
+  "e5_c": {
+    "count": 1,
+    "changes": [{"t_s": 1.5, "what": "应用窗口下部中央弹出一个小白色浮层/回复卡片（1.98s 内部文字又变一次，约 2.4s 展开成带文字的卡片）；画面主体 UI 未换页"}],
+    "confidence": "low"
+  },
+  "e6_d": {
+    "count": 3,
+    "changes": [
+      {"t_s": 0.9, "what": "画面整体推远并换视图：从桌面图标网格变成带上下黑边的暗色桌面视图，顶部出现「Agent 不等于 模型」标题与红色箭头"},
+      {"t_s": 1.7, "what": "整屏突然大幅平移重排，出现一个大深色窗口占据画面中央"},
+      {"t_s": 2.7, "what": "硬切成浅色首屏「DeepSeek Harness 现在，开始拥有」+ 深色终端窗口"}
+    ],
+    "confidence": "medium"
+  }
+}

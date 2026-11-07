@@ -1,0 +1,41 @@
+{
+ "cases": {
+  "e1_slides": {
+   "source": "BV1rop26FEZf 13.5–16.5s（dsh-read-animation 视频）",
+   "truth_changes": [
+    {
+     "t_s": 2.5,
+     "kind": "文字页整页切换",
+     "note": "标题「发一张 GIF，直接问」→「它读出了动作变化」"
+    }
+   ],
+   "truth_count": 1
+  },
+  "e6_d": {
+   "source": "BV1MdpT6tENu 143.5–146.5s",
+   "truth_changes": [
+    {
+     "t_s": 0.37,
+     "kind": "幻灯片切换",
+     "note": "切到窗口/桌面画面"
+    },
+    {
+     "t_s": 0.97,
+     "kind": "幻灯片切换",
+     "note": "淡入式，回到文字页"
+    },
+    {
+     "t_s": 1.67,
+     "kind": "窗口出现",
+     "note": "右下角弹出窗口"
+    },
+    {
+     "t_s": 2.73,
+     "kind": "整幅换画",
+     "note": "换到另一张深色背景页，最剧烈的一次"
+    }
+   ],
+   "truth_count": 4
+  }
+ }
+}
