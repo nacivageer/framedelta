@@ -95,18 +95,13 @@
    "source": "影之刃零 最终预告（see-now/_scratch/trailer.mp4）133.5–136.5s，960x540 30fps",
    "truth_changes": [
     {
-     "t_s": 1.05,
-     "kind": "爆炸强闪光",
-     "note": "近景劈砍→白光爆闪，整幅瞬间变亮"
-    },
-    {
-     "t_s": 1.19,
-     "kind": "爆炸扩散",
-     "note": "白光扩散到覆盖大半个画面"
+     "t_s": 1.1,
+     "kind": "闪白过渡",
+     "note": "战斗画面被白光吞没，随即退成红底片名「影之刃零」；1.056s 与 1.188s 两次跳变相隔 132ms，是同一次过渡"
     }
    ],
-   "truth_count": 2,
-   "note": "连续动作，无硬切；video_storyboard 报的 5 个 cut 是快速运镜/爆炸误判，已抽帧复核（runs/_probe/e7_cuts.png）"
+   "truth_count": 1,
+   "note": "2.4–2.8s 片名画面的渐暗属同一画面内变化，不计；video_storyboard 报的 5 个 cut 是快速运镜/爆炸的误判（runs/_probe/e7_cuts.png）"
   },
   "e8_fufu": {
    "source": "BV1gf4P6YEnS 45.5–48.5s，960x540 30fps",
@@ -114,28 +109,28 @@
     {
      "t_s": 0.77,
      "kind": "硬切换镜",
-     "note": "宽景→近景（披风占满画面）"
+     "note": "红调场景（巨大剪影与绦带）→ 暗部大特写（深色弧状物体横贯画面）"
+    },
+    {
+     "t_s": 2.2,
+     "kind": "模糊过渡换景",
+     "note": "2.1–2.2s 一帧运动模糊后落成远景：持械身影立在枯树与暗红天空之间"
     }
    ],
-   "truth_count": 1,
-   "note": "之后是连续快速运动，无新切点；工具报的 2.11/2.18 是快速运动造成的大面积瞬时变化，抽帧复核未见换画面（runs/_probe/e8_cuts.png）"
+   "truth_count": 2,
+   "note": "2.112s 与 2.178s 两次跳变（相隔 66ms）是同一次过渡；0–0.7s 的 motion 段是同场景持续运镜，不计（runs/_probe/e8_cuts.png）"
   },
   "e9_aimanhua": {
    "source": "BV1KjnK6EE46 9.5–12.5s，960x540 30fps",
    "truth_changes": [
     {
-     "t_s": 0.87,
-     "kind": "换镜",
-     "note": "集市全景（两人）→ 蓝发少女近景，带运动模糊"
-    },
-    {
-     "t_s": 2.43,
-     "kind": "换镜",
-     "note": "切到另一位角色（教堂/黑衣人群场景）"
+     "t_s": 2.41,
+     "kind": "硬切换镜",
+     "note": "蓝发女仆近景 → 橙发少女与深色兜帽人群，人物与背景全换"
     }
    ],
-   "truth_count": 2,
-   "note": "1.00s 处是同一镜头的余波，不计（runs/_probe/e9_cuts.png）"
+   "truth_count": 1,
+   "note": "0.858s 处 coherence 0.814 / resid 0.83px、中间有运动模糊，判为快速推镜（同一场景），不计；工具在这里多报 1 次（runs/_probe/e9_cuts.png）"
   }
  }
 }

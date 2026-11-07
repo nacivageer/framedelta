@@ -1,0 +1,25 @@
+{
+  "arm": "framedelta-products-v5-new",
+  "note": "第五轮：新素材三段（预告片/游戏动画/AI 漫剧）。读图方 subagent adcc9784，只看 runs/eval/{e7_trailer,e8_fufu,e9_aimanhua}/。2026-11-08",
+  "e7_trailer": {
+    "count": 1,
+    "changes": [{"t_s": 1.1, "what": "爆炸闪白吞没整帧，战斗画面消失，随后白光退成红底白色书法片名；约 2.4–2.8s 背景渐隐成黑，片名段持续到结尾"}],
+    "confidence": "medium",
+    "evidence": "jumps 2 条（1.056s 与 1.188s，相隔 132ms，属同一道闪白过渡，只算一次换画面）；0.26–1.02s 是 motion 段（23 对，同场景大面积运动不计）"
+  },
+  "e8_fufu": {
+    "count": 2,
+    "changes": [
+      {"t_s": 0.8, "what": "红调场景（一大一小两个剪影与红色绦带）硬切为暗部大特写：红底上一道粗大的深色弧状物体横贯画面"},
+      {"t_s": 2.1, "what": "由深色弧状物体特写，经一帧模糊过渡，变成红调远景：持械身影立在枯树与暗红天空之间"}
+    ],
+    "confidence": "medium",
+    "evidence": "jumps 3 条，其中 2.112s 与 2.178s 相隔 66ms，肉眼算一次过渡；0–0.7s motion 段是同场景持续运镜"
+  },
+  "e9_aimanhua": {
+    "count": 1,
+    "changes": [{"t_s": 2.4, "what": "蓝发女仆在水果摊前的中近景，硬切为橙发少女手捧书本、两侧站着深色兜帽人的暗背景画面"}],
+    "confidence": "high",
+    "evidence": "0.858s 虽被标 jump，但 coherence 0.814、resid 0.83px，且广角→运动模糊→近景是快速推镜的同一场景，不计；2.409s 才是硬切（ncc 0.044、resid 9.14）"
+  }
+}
