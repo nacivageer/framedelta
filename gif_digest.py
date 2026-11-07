@@ -83,6 +83,18 @@ TH = {
     "drift_total_frac": 0.20,     # 首尾两帧的变化面积下限
     "drift_settle_energy": 3.0,   # 变化前后都要静下来
     "drift_settle_pairs": 4,
+    # 渐变转场（叠化 / 换页淡变 / 到白黑场的塌陷）：稳定 → 过渡 → 稳定
+    # 依据见 docs/方案_渐变判据.md：单帧强度分不开溶解与运镜，只有时间结构分得开
+    "fade_min_quiet_ms": 250.0,   # 过渡两侧各要有这么长的静段（L3 只有 300ms）
+    "fade_seg_min_ms": 120.0,
+    "fade_seg_max_ms": 1200.0,
+    "fade_changed_frac": 0.18,    # 两侧画面的差异面积下限（4 个漏点是 0.21–0.96）
+    "fade_merge_ms": 200.0,       # 相隔这么近的两个渐变事件算同一次
+    "fade_blank_luma": 60.0,      # 到白/黑场：亮度变化下限（运镜最大 20，白场 116）
+    "fade_blank_hi": 235.0,
+    "fade_blank_lo": 20.0,
+    "fade_blank_win_ms": 400.0,   # 亮度塌陷必须发生在这么短的窗口里
+    "fade_blank_persist_ms": 120.0,  # 而且新亮度要维持住（排除闪白）
 }
 
 
@@ -557,6 +569,146 @@ def _drift_from_run(run, frames, idx, times, th):
         "quiet_cells": round(float((gd < 3).mean()), 3),
         "disp_px": round(math.hypot(p.get("dx", 0.0), p.get("dy", 0.0)), 2),
     }
+
+
+def fade_events(pairs, frames, idx, times, total_ms, th=None, skip_spans=()):
+    """渐变类状态切换：稳定 → 过渡 → 稳定；外加「到白/黑场」的塌陷。
+
+    为什么单开一类（`docs/方案_渐变判据.md`）：`drift` 的两道闸——`hsv ≥ 4`、前后 0.13s
+    安静——把低对比叠化（逐对 hsv 只有 1–2）和落在运动里的溶解都挡在外面；而强度、
+    位移、调色板这些单帧统计分不开溶解与运镜（L1 14.2 与打斗运镜的 ΔRGB 是 21.5 vs 22.7）。
+    分得开的只有时间结构：溶解是「稳定 → 过渡 → 稳定」，运镜是「一直在变」。
+
+    `skip_spans` 是已经被 drift / swap 报过的时间段（帧区间），重叠的渐变不再重复报。
+    只对 >5s 的输入启用，≤5s 的产物保持一字不变。
+    """
+    th = {**TH, **(th or {})}
+    nf = len(times)
+    if total_ms <= _COARSEN_MIN_TOTAL_MS or len(pairs) < 4 or nf < 4:
+        return []
+    n = len(pairs)
+    kinds = [p["kind"] for p in pairs]
+    dt = float(np.median(np.diff(times))) or 33.0
+    min_quiet = max(1, int(np.ceil(th["fade_min_quiet_ms"] / dt)))
+
+    def quiet_before(a):
+        j, c = a - 1, 0
+        while j >= 0 and kinds[j] == "still":
+            c += 1
+            j -= 1
+        return c
+
+    def quiet_after(b):
+        j, c = b + 1, 0
+        while j < n and kinds[j] == "still":
+            c += 1
+            j += 1
+        return c
+
+    def cf(fa, fb):
+        a, b = frames[idx[fa]], frames[idx[fb]]
+        return float((np.abs(a.astype(np.int16) - b.astype(np.int16)) > 12).mean())
+
+    luma_cache = {}
+
+    def lum(f):
+        if f not in luma_cache:
+            luma_cache[f] = float(frames[idx[f]].mean())
+        return luma_cache[f]
+
+    events = []
+    # 1) 渐变段：连续「非静」的对，两侧各要有 min_quiet 的静段
+    i = 0
+    while i < n:
+        if kinds[i] == "still":
+            i += 1
+            continue
+        j = i
+        while j < n and kinds[j] != "still":
+            j += 1
+        a, b = i, j - 1
+        i = j
+        qa, qb = quiet_before(a), quiet_after(b)
+        if qa < min_quiet or qb < min_quiet:
+            continue
+        f0 = max(0, pairs[a]["frame"] - 1)
+        f1 = min(nf - 1, pairs[b]["frame"])
+        dur = float(times[f1]) - float(times[f0])
+        if not (th["fade_seg_min_ms"] <= dur <= th["fade_seg_max_ms"]):
+            continue
+        if any(kinds[k] == "jump" for k in range(a, b + 1)):
+            continue
+        fa = max(0, pairs[a]["frame"] - 1 - qa // 2)
+        fb = min(nf - 1, pairs[b]["frame"] + qb // 2)
+        frac = cf(fa, fb)
+        if frac < th["fade_changed_frac"]:
+            continue
+        events.append({
+            "start_frame": idx[f0], "end_frame": idx[f1],
+            "start_ms": round(float(times[f0]), 1), "end_ms": round(float(times[f1]), 1),
+            "mid_ms": round((float(times[f0]) + float(times[f1])) / 2.0, 1),
+            "duration_ms": round(dur, 1), "mode": "gradual",
+            "changed_frac": round(frac, 3), "pairs": b - a + 1,
+            "luma_a": round(lum(fa), 1), "luma_b": round(lum(fb), 1),
+            "max_pair_frac": round(max(pairs[k]["changed_frac"] for k in range(a, b + 1)), 3),
+            "jump_inside": 0,
+        })
+
+    # 2) 塌陷：亮度在 fade_blank_win_ms 内跳到白/黑并维持（排除闪白：闪完会回来）
+    hi, lo = th["fade_blank_hi"], th["fade_blank_lo"]
+    win = max(1, int(np.ceil(th["fade_blank_win_ms"] / dt)))
+    persist = max(1, int(np.ceil(th["fade_blank_persist_ms"] / dt)))
+    jump_frames = [p["frame"] for p in pairs if p["kind"] == "jump"]
+
+    def extreme(f):
+        return lum(f) >= hi or lum(f) <= lo
+
+    for e in range(1, nf):
+        if not extreme(e) or extreme(e - 1):
+            continue          # 只在「从非极端跨进极端」的那一帧处理
+        s = e - 1
+        for k in range(e - 1, max(-1, e - win - 1), -1):
+            if extreme(k):
+                break
+            s = k
+        if abs(lum(e) - lum(s)) < th["fade_blank_luma"]:
+            continue
+        if not all(extreme(k) for k in range(e, min(nf, e + persist + 1))):
+            continue          # 闪白/闪黑：亮完马上回来，不算状态切换
+        if any(s <= jf <= e for jf in jump_frames):
+            continue          # 本来就是硬切，jumps 里有了
+        events.append({
+            "start_frame": idx[s], "end_frame": idx[e],
+            "start_ms": round(float(times[s]), 1), "end_ms": round(float(times[e]), 1),
+            "mid_ms": round((float(times[s]) + float(times[e])) / 2.0, 1),
+            "duration_ms": round(float(times[e]) - float(times[s]), 1), "mode": "blank",
+            "changed_frac": round(cf(s, e), 3), "pairs": max(1, e - s),
+            "luma_a": round(lum(s), 1), "luma_b": round(lum(e), 1),
+            "max_pair_frac": round(max((p["changed_frac"] for p in pairs[s:e]), default=0.0), 3),
+            "jump_inside": 0,
+        })
+
+    # 合并：相隔 fade_merge_ms 内的算一次；塌陷优先（它比渐变更能说明「变成了什么」）
+    events.sort(key=lambda d: d["mid_ms"])
+    merged = []
+    for ev in events:
+        if merged and not (ev["mid_ms"] - merged[-1]["mid_ms"] > th["fade_merge_ms"]
+                           or ev["mid_ms"] < merged[-1]["start_ms"]):
+            prev = merged[-1]
+            if ev["mode"] == "blank" and prev["mode"] != "blank":
+                ev = {**ev, "start_ms": min(ev["start_ms"], prev["start_ms"])}
+                merged[-1] = ev
+            continue
+        merged.append(ev)
+
+    # 与 drift / swap 重叠的不再报：同一段变化，drift 已经说过一次
+    out = []
+    for ev in merged:
+        a, b = ev["start_frame"], ev["end_frame"]
+        if any(min(b, e) - max(a, s) > 0 for s, e in skip_spans):
+            continue
+        out.append(ev)
+    return out
 
 
 def classify_pairs(pairs, th=None):
@@ -1283,6 +1435,9 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         shots_grid.append(t)
     # 先判 swap/drift，再选代表帧——「变化的那一帧」要参与选帧
     swaps, drifts = content_events(pairs, frames, idx, times)
+    skip_spans = [(d["start_frame"], d["end_frame"]) for d in drifts] + \
+                 [(s["frame"] - 1, s["frame"]) for s in swaps]
+    fades = fade_events(pairs, frames, idx, times, total_ms, skip_spans=skip_spans)
     budget = key_budget(total_ms, key_n)
     k_want = budget["k"]
     # 代表帧去重与末态保证：2026-11-08 从 >8s 下放到所有输入。
@@ -1421,10 +1576,12 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
             "jumps": len(jumps),
             "swaps": len(swaps),
             "drifts": len(drifts),
+            "fades": len(fades),
         },
         "jumps": jumps,
         "swaps": swaps,
         "drifts": drifts,
+        "fades": fades,
         "transitions": transitions,
         "shots": shots,
         "intervals": intervals,
