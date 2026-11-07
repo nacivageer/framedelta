@@ -52,7 +52,7 @@
 
 见 `docs/决策记录.md` 的「评测（L2/L3 端到端）」一节。第二轮起产物自带 `Δarea`（每张代表帧相对上一帧的变化像素占比，`annotated.png` 头行、`sheet.png` 每格、`digest.key_frames[].delta` 三处一致）；第三轮起 `digest.json` 多两类事件：`swaps`（布局不变的大块内容替换）与 `drifts`（连续中等变化累积成的一次变化）。
 
-长片段的预算对照（4 张 vs 6 张，两臂各一个独立读图方）也在那一节：**6 张没有比 4 张读得更准**（11/16 对 12/16），原因是多出来的槽位被「切点前后对照对」吃掉，而不是去补中段覆盖。原始答案：`answers_L1-L3_k4.json` / `answers_L1-L3_k6.json` / `answers_tool_long.json`（工具自报基线）。
+长片段的预算对照（4 / 6 / 8 张，每臂各一个独立读图方）：命中 **12 / 11 / 12**（共 16 点，±0.5s），结构覆盖 7 / 12 / 14。**多给格子没有换来更准的读数**，但原因不是「槽位被切点前后对照对吃掉」——2026-11-08 的普查推翻了这条：对照对只占 2 / 4 / 6 格，两格内容不重复（后格 Δarea 66–75%，前格与其它格最高 NCC 0.33–0.52），删掉「切点前」那格会丢掉真值点唯一的图。真正的缺陷是**末帧没有保证**（L2 的白屏在 6/8 张臂里都没进格）与**静止段重复取格**（L3 的 8 格只有 4 种画面）。原始答案：`answers_L1-L3_k4.json` / `_k6.json` / `_k8.json` / `answers_tool_long.json`（工具自报基线）。
 
 ## 重跑
 
@@ -73,7 +73,12 @@ python tools/frames.py runs/eval/_clips/L1_trailer.mp4 --out x.png --around 451 
 预算对照实验（同一段、同一批问题，只差给几张图）：
 
 ```
-python gif_digest.py runs/eval/_clips/L1_trailer.mp4 --out runs/eval4/L1_trailer --key 4
+python gif_digest.py runs/eval/_clips/L1_trailer.mp4 --out runs/base/k4/L1_trailer --key 4
+python gif_digest.py runs/eval/_clips/L1_trailer.mp4 --out runs/base/k6/L1_trailer --key 6
+python gif_digest.py runs/eval/_clips/L1_trailer.mp4 --out runs/base/k8/L1_trailer --key 8
 python tools/score.py eval/truth_long.json eval/answers_L1-L3_k4.json --tol 0.5
 python tools/score.py eval/truth_long.json eval/answers_L1-L3_k6.json --tol 0.5
+python tools/score.py eval/truth_long.json eval/answers_L1-L3_k8.json --tol 0.5
 ```
+
+结构侧（不花钱、不用读图方）：`python tools/coverage.py --arm 4=runs/base/k4 --arm 6=runs/base/k6 --arm 8=runs/base/k8`；查重复格用 `python tools/simmat.py runs/base/k8/L3_screen`。
