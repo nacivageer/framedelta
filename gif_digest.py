@@ -41,6 +41,8 @@ DIM = (128, 138, 146)
 ACCENT = (255, 90, 60)
 
 # 阈值集中在一处，写进 digest.json，产物才可复现
+_COARSEN_MIN_TOTAL_MS = 5000   # 只对长片段粗化区间，短片段保持逐段原样
+
 TH = {
     "repeat_mean_abs_rgb": 1.0,   # 重复帧：整帧 RGB 均值绝对差 < 1.0
     "jump_hsv_score": 18.0,        # 突变候选：HSV 三通道加权差（0–255）
@@ -582,6 +584,59 @@ def classify_pairs(pairs, th=None):
                            "local_mag": 0.0, "local_mag_mean": 0.0, "local_frac": 0.0}
 
 
+def coarsen_segments(segs, min_ms=200.0, keep=("jump",)):
+    """把过短的区间并进邻居：长片段上「每 2-3 对一个区间」读不动。
+
+    规则：反复处理时长 < min_ms 的区间（jump 不并），把它合进能量更高的那一侧邻居，
+    区间种类跟着邻居走；再合并相邻同种区间。只在 total 超过 _COARSEN_MIN_TOTAL_MS 时启用。
+    """
+    if len(segs) < 3:
+        return segs
+    work = [dict(s) for s in segs]
+    changed = True
+    while changed and len(work) > 1:
+        changed = False
+        for i, s in enumerate(work):
+            dur = s.get("end_t_ms", 0) - s.get("start_t_ms", 0)
+            if dur >= min_ms or s["kind"] in keep:
+                continue
+            left = work[i - 1] if i > 0 else None
+            right = work[i + 1] if i + 1 < len(work) else None
+            if left is None and right is None:
+                continue
+            if left is None:
+                tgt = right
+                merge_left = False
+            elif right is None:
+                tgt = left
+                merge_left = True
+            else:
+                merge_left = left.get("energy_max", 0) >= right.get("energy_max", 0)
+                tgt = left if merge_left else right
+            if merge_left or tgt is left:
+                tgt["end_frame"] = s["end_frame"]
+                tgt["end_t_ms"] = s["end_t_ms"]
+            else:
+                tgt["start_frame"] = s["start_frame"]
+                tgt["start_t_ms"] = s["start_t_ms"]
+            tgt["pairs"] = tgt.get("pairs", 0) + s.get("pairs", 0)
+            tgt["energy_max"] = max(tgt.get("energy_max", 0), s.get("energy_max", 0))
+            work.pop(i)
+            changed = True
+            break
+    # 相邻同种再并一遍
+    out = []
+    for s in work:
+        if out and out[-1]["kind"] == s["kind"] and s["kind"] not in keep:
+            out[-1]["end_frame"] = s["end_frame"]
+            out[-1]["end_t_ms"] = s["end_t_ms"]
+            out[-1]["pairs"] += s["pairs"]
+            out[-1]["energy_max"] = max(out[-1]["energy_max"], s["energy_max"])
+        else:
+            out.append(s)
+    return out
+
+
 def segments_of(pairs):
     """把逐对判定并成区间。"""
     out = []
@@ -1029,8 +1084,10 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
     idx = resample_indices(frames, durations, fps, max_frames)
     analyses = analyse(frames, durations, idx)
     pairs = analyses["pairs"]
-    segs = segments_of(pairs)
     total_ms = sum(durations)
+    segs = segments_of(pairs)
+    if total_ms > _COARSEN_MIN_TOTAL_MS:
+        segs = coarsen_segments(segs)
     times = analyses["times"]
     struct = shot_structure(pairs, idx, times, total_ms)
     # shot_structure 的 start/end 是原始帧号；选帧用 idx 下标。重采样时两个空间不同，
