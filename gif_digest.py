@@ -796,6 +796,11 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
             alloc[i] += 1
         picked = []
         for (lo, hi), cnt in zip(ranges, alloc):
+            # 没有切点、又占掉整段四分之一以上的长镜头：用中段帧。
+            # 否则 8 秒的镜头只剩开头那张爆炸图，主体（片名卡、远景）一张都看不到。
+            if cnt == 1 and hi - lo + 1 > n / 4:
+                picked.append(((lo + hi) // 2, "shot_mid"))
+                continue
             picked += _pick_in_range(prio, lo, hi, cnt, n)
         seen, out = set(), []
         for fi, why in picked:
@@ -803,7 +808,7 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
                 seen.add(fi)
                 out.append((fi, why))
         if len(out) >= 2:
-            return sorted(out)
+            return _dedupe_adjacent(sorted(out), prio, n, k)
 
     chosen = []
     for b in range(k):
@@ -820,6 +825,34 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
         if fi not in seen:
             seen.add(fi)
             out.append((fi, why))
+    return _dedupe_adjacent(sorted(out), prio, n, k)
+
+
+def _dedupe_adjacent(out, prio, n, k):
+    """两帧挨在 3 帧以内时只留优先级高的那张，空出的槽位用远端补。"""
+    if len(out) < 2:
+        return out
+    out = list(out)
+    i = 0
+    while i < len(out) - 1:
+        pair_reasons = {out[i][1], out[i + 1][1]}
+        # 「切点前/切点后」这一对本来就是刻意的相邻，別拆
+        if pair_reasons == {"before_jump", "after_jump"}:
+            i += 1
+            continue
+        if abs(out[i][0] - out[i + 1][0]) <= 3:
+            pa, pb = prio.get(out[i][0], (0, ""))[0], prio.get(out[i + 1][0], (0, ""))[0]
+            drop = i if pa < pb else i + 1
+            out.pop(drop)
+            continue
+        i += 1
+    while len(out) < k:
+        span = n - 1
+        cand = max(range(0, n, max(1, span // (k * 2))),
+                   key=lambda f: min(abs(f - o[0]) for o in out))
+        if any(abs(cand - o[0]) <= 3 for o in out):
+            break
+        out.append((cand, "fill"))
     return sorted(out)
 
 
