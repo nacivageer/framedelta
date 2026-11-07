@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "framedelta",
+    "description": "Measures what changes in a short clip — jumps, whole-frame replacements, cumulative drifts, fades — and returns one labelled contact sheet plus a timeline."
+  }
+}

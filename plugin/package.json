@@ -1,0 +1,40 @@
+{
+  "name": "dsh-framedelta",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Frame-change digest for short clips: jumps, replacements, cumulative drifts, fades, and one labelled contact sheet. · 把一段连续帧压成「变化描述 + 一张读得懂的图」。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "framedelta",
+    "frame-difference",
+    "python"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "tool-spec.js",
+    "schema.js",
+    "run.js",
+    "python.js",
+    "py/gif_digest.py",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
