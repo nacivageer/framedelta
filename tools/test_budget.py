@@ -13,7 +13,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from gif_digest import KEY_BUDGET, key_budget, pick_key_frames  # noqa: E402
+from gif_digest import (KEY_BUDGET, key_budget, pick_key_frames,  # noqa: E402
+                        _drop_same_picture, _tail_drop_candidate)
 
 FAILED = []
 
@@ -91,8 +92,8 @@ def test_pick_respects_k():
         check_true("k=%d 时一帧都没选" % k, len(picked) >= 1)
 
 
-def test_short_clip_unchanged():
-    """短片段必须仍是 4 张——这是「≤8s 产物一字不变」的承诺。"""
+def test_short_clip_budget():
+    """短片段仍按 ≤8s 给 k=4；实出张数可少于 k（同一画面不重复占格），budget.images 如实写。"""
     for ms in (480, 2460, 2970, 8000):
         check("短片段 %dms 的 k" % ms, key_budget(ms)["k"], 4)
 
@@ -131,6 +132,35 @@ def test_tail_guaranteed():
     check_true("末帧与首格同图却两张都占了：%r" % frames, not (0 in frames and 40 in frames))
 
 
+def test_transitive_same_picture():
+    """A≈B、B≈C 但 A≉C：旧一趟贪心替换后会留下 A、C 同时占格（86C6 的 36/49）。"""
+    out = [(0, "a"), (1, "b"), (2, "c"), (3, "d")]
+    prio = {0: (1, ""), 1: (2, ""), 2: (3, ""), 3: (4, "")}
+    table = {(1, 3): 0.91, (2, 3): 0.94, (1, 2): 0.87}
+
+    def sim(i, j):
+        return table.get((i, j), table.get((j, i), 0.0))
+
+    frames = [f for f, _ in _drop_same_picture(out, prio, sim)]
+    check_true("传递重复没消干净：%r" % frames,
+               not any(sim(a, b) >= 0.90 for i, a in enumerate(frames) for b in frames[i + 1:]))
+
+
+def test_tail_keeps_opening():
+    """末态占格不能拿开场帧去换；相邻的假切点对可以先让位。"""
+    prio = {0: (2.4, "first"), 10: (1.9, "motion_peak"),
+            20: (3.0, "before_jump"), 21: (3.0, "after_jump")}
+    out = [(0, "first"), (10, "motion_peak"), (20, "before_jump"),
+           (21, "after_jump")]
+    drop = _tail_drop_candidate(out, prio, lambda i, j: 0.0, 41, protect_jump_pair=False)
+    check_true("末态占格拿开场帧(0)去换：%r" % drop, drop != 0)
+    check_true("相邻假切点对没让位：%r" % drop, drop in (20, 21))
+
+    # 长片段保护切点前后对照对：不该拿 20/21 去换末帧
+    drop = _tail_drop_candidate(out, prio, lambda i, j: 0.0, 41, protect_jump_pair=True)
+    check_true("长片段把切点对照对让掉了：%r" % drop, drop == 10)
+
+
 def test_similar_off_keeps_old_shape():
     """不给 similar 时行为不变（短片段与旧路径都走这条）。"""
     pairs = _synth_pairs()
@@ -142,8 +172,9 @@ def test_similar_off_keeps_old_shape():
 
 def main():
     for fn in (test_boundaries, test_monotonic, test_derivation_text, test_fixed,
-               test_pick_respects_k, test_short_clip_unchanged,
-               test_same_picture_not_repeated, test_tail_guaranteed,
+               test_pick_respects_k, test_short_clip_budget,
+               test_same_picture_not_repeated, test_transitive_same_picture,
+               test_tail_guaranteed, test_tail_keeps_opening,
                test_similar_off_keeps_old_shape):
         fn()
     if FAILED:
@@ -151,8 +182,8 @@ def main():
         for f in FAILED:
             print("  - " + f)
         return 1
-    print("PASS 9 组检查（边界 / 单调 / 推法文本 / --key 写死 / 选帧不超预算 / 短片段不变"
-          " / 同图不重复 / 末态保证 / 关掉去重仍可用）")
+    print("PASS 11 组检查（边界 / 单调 / 推法文本 / --key 写死 / 选帧不超预算 / 短片段预算"
+          " / 同图不重复 / 传递重复 / 末态保证 / 末态让位 / 关掉去重仍可用）")
     return 0
 
 

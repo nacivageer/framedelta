@@ -768,7 +768,7 @@ def key_budget(total_ms: float, key_n: int | None = None) -> dict:
 
 
 def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
-                    multi_cut=False, similar=None, tail=False):
+                    multi_cut=False, similar=None, tail=False, protect_jump_pair=False):
     """L2 闸门：把时间轴切成 k 段，每段挑一个最有信息量的帧。
 
     similar(i, j) -> NCC：给了就启用两条长片段规则——
@@ -850,7 +850,8 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
                 seen.add(fi)
                 out.append((fi, why))
         if len(out) >= 2:
-            return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail)
+            return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail,
+                                    protect_jump_pair=protect_jump_pair)
 
     chosen = []
     for b in range(k):
@@ -867,10 +868,11 @@ def pick_key_frames(pairs, n_frames, k=4, shots=None, swaps=None, drifts=None,
         if fi not in seen:
             seen.add(fi)
             out.append((fi, why))
-    return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail)
+    return _dedupe_adjacent(sorted(out), prio, n, k, similar=similar, tail=tail,
+                            protect_jump_pair=protect_jump_pair)
 
 
-def _dedupe_adjacent(out, prio, n, k, similar=None, tail=False):
+def _dedupe_adjacent(out, prio, n, k, similar=None, tail=False, protect_jump_pair=False):
     """两帧挨在 3 帧以内时只留优先级高的那张，空出的槽位用远端补。
 
     similar 给了就再走两条：同一张画面只留一格；末帧（尾段没有硬切时）必须有一格。
@@ -899,10 +901,9 @@ def _dedupe_adjacent(out, prio, n, k, similar=None, tail=False):
             # 末态：末帧是「还没出现在任何格子里」的新画面才值得占一格。
             # 尾段有硬切时这条不启用——那种时间已经在 jumps 里，读者拿得到，
             # 占一格换掉的往往是更值钱的画面（L1 的 14.88 就是 1 帧硬切）。
-            plain = [(prio.get(fi, (0, ""))[0], j) for j, (fi, why) in enumerate(out)
-                     if why not in ("before_jump", "after_jump")]
-            if plain:
-                out.pop(min(plain)[1])
+            drop = _tail_drop_candidate(out, prio, similar, n, protect_jump_pair)
+            if drop is not None:
+                out = [(fi, why) for fi, why in out if fi != drop]
                 out.append((n - 1, "last"))
                 out.sort()
         return _fill_by_gap(out, n, k, similar)
@@ -918,15 +919,63 @@ def _dedupe_adjacent(out, prio, n, k, similar=None, tail=False):
 
 
 def _drop_same_picture(out, prio, similar, same=_KEY_SAME_PICTURE):
-    """同一张画面只留一格（留优先级高的那格）。静止素材里这条能省下两三格。"""
-    kept = []
-    for fi, why in out:
-        hit = next((j for j, (fj, _) in enumerate(kept) if similar(fi, fj) >= same), None)
-        if hit is None:
-            kept.append((fi, why))
-        elif prio.get(fi, (0, ""))[0] > prio.get(kept[hit][0], (0, ""))[0]:
-            kept[hit] = (fi, why)
+    """同一张画面只留一格（留优先级高的那格）。
+
+    2026-11-08：旧实现一趟贪心会漏掉传递重复——A≈B、B≈C 但 A≉C 时，
+    替换 B 后 A、C 仍可能同时留下（86C6 的 36/49 就是 0.94 仍占两格）。
+    这里改成反复消解冲突，直到没有一对 ≥ same。
+    """
+    kept = list(out)
+    changed = True
+    while changed and len(kept) > 1:
+        changed = False
+        for i in range(len(kept)):
+            for j in range(i + 1, len(kept)):
+                if similar(kept[i][0], kept[j][0]) >= same:
+                    pi = prio.get(kept[i][0], (0, ""))[0]
+                    pj = prio.get(kept[j][0], (0, ""))[0]
+                    kept.pop(j if pi >= pj else i)
+                    changed = True
+                    break
+            if changed:
+                break
     return kept
+
+
+def _tail_drop_candidate(out, prio, similar, n, protect_jump_pair=False):
+    """末态占格时该让哪一格：优先让「和邻居挤在一起/像同一张」的那格，不动开场。
+
+    旧实现直接让优先级最低的非切点格——381C 用「挥手」换末帧、EEEC 用「暗场」换末帧，
+    都是拿唯一的状态换一张尾图。这里先保护最早的代表帧（开场状态，且在前 40% 内），
+    再按「挤在一起」优先；没有相邻格时才让优先级最低的。长片段额外保护切点前后对照对
+    （L2 的 1.81 就是这样被让掉的）。
+    """
+    if len(out) <= 1:
+        return None
+    frames = [fi for fi, _ in out]
+    reasons = dict(out)
+    n_last = n - 1
+    earliest = min(frames)
+    protect = earliest if earliest <= 0.4 * max(1, n_last) else None
+    cands = [fi for fi in frames if fi != n_last and fi != protect]
+    if protect_jump_pair:
+        safe = [fi for fi in cands if reasons.get(fi) not in ("before_jump", "after_jump")]
+        if safe:
+            cands = safe
+    if not cands:
+        return None
+
+    def gap(fi):
+        return min((abs(fi - fj) for fj in frames if fj != fi), default=n)
+
+    def mx(fi):
+        return max((similar(fi, fj) for fj in frames if fj != fi), default=0.0)
+
+    adj_gap = max(3, int(round(0.10 * max(1, n_last))))
+    near = [fi for fi in cands if gap(fi) <= adj_gap]
+    if near:
+        return max(near, key=lambda fi: (mx(fi), -gap(fi), -prio.get(fi, (0, ""))[0], -fi))
+    return max(cands, key=lambda fi: (-prio.get(fi, (0, ""))[0], mx(fi), -gap(fi), -fi))
 
 
 def _fill_by_gap(out, n, k, similar, same=_KEY_SAME_PICTURE):
@@ -1236,9 +1285,11 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     swaps, drifts = content_events(pairs, frames, idx, times)
     budget = key_budget(total_ms, key_n)
     k_want = budget["k"]
-    # 长片段才开「同一画面不重复占格」与「末态保证」：≤8s 的产物保持一字不变
+    # 代表帧去重与末态保证：2026-11-08 从 >8s 下放到所有输入。
+    # 12 个 GIF 例图暴露 ≤8s 也有硬伤（86C6/AFF4/C3AC 重复格、381C/7FEB 缺尾帧）；
+    # 短片段尾段有 jump 时仍允许末帧——GIF 的 jump 多是快动作，末帧往往就是最后一个可读状态。
     similar, tail = None, False
-    if total_ms > KEY_BUDGET["free_ms"] and len(idx) == n:
+    if len(idx) == n:
         grid_cache = {}
 
         def similar(i, j, _c=grid_cache):
@@ -1247,12 +1298,16 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                     _c[g] = grid_rgb(frames[idx[g]])
             return grid_ncc(_c[i], _c[j])
 
-        last_start = shots_grid[-1]["start_frame"] if shots_grid else 0
-        tail = not any(p["kind"] == "jump" and p["frame"] > last_start for p in pairs)
+        if total_ms > KEY_BUDGET["free_ms"]:
+            last_start = shots_grid[-1]["start_frame"] if shots_grid else 0
+            tail = not any(p["kind"] == "jump" and p["frame"] > last_start for p in pairs)
+        else:
+            tail = True
     picked = pick_key_frames(pairs, n, k_want, shots=shots_grid,
                              swaps=swaps, drifts=drifts,
                              multi_cut=len(struct["transitions"]) > 1,
-                             similar=similar, tail=tail)
+                             similar=similar, tail=tail,
+                             protect_jump_pair=(total_ms > KEY_BUDGET["free_ms"]))
     keys = [fi for fi, _ in picked]
     reasons = {fi: why for fi, why in picked}
     by_frame = {p["frame"]: p for p in pairs}

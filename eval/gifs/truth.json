@@ -1,0 +1,156 @@
+{
+  "schema": "framedelta/gif-truth@1",
+  "gif_dir": "H:\\DSH\\给dsh看的动图",
+  "source_note": "全帧结论来自 Daily Chat/notes/识图库.md 第 3 条（2026-11-08 实看 12 个文件）；beat 时间按全帧抽帧复核，容差 500–900ms，标的是「这一刻应该有一张能看懂的图」，不是精确切点。",
+  "same_picture_ncc": 0.90,
+  "default_tail_tol_ms": 700,
+  "cases": [
+    {
+      "case": "381C0068C53E29F94623F88C569A412C",
+      "file": "381C0068C53E29F94623F88C569A412C.gif",
+      "duration_ms": 4070,
+      "expected_jumps": 0,
+      "description": "街边：拖鲸尾走 → 抬手挥 → 竖中指 → 走开；一个连续场景，没有换场。",
+      "beats": [
+        {"name": "走", "t_ms": 0, "tol_ms": 500},
+        {"name": "抬手挥/竖中指", "t_ms": 2070, "tol_ms": 500},
+        {"name": "转身", "t_ms": 3000, "tol_ms": 500},
+        {"name": "走开", "t_ms": 3900, "tol_ms": 700}
+      ]
+    },
+    {
+      "case": "39EC9BF346EE311127DE1659FEFBD9BF",
+      "file": "39EC9BF346EE311127DE1659FEFBD9BF.gif",
+      "duration_ms": 6880,
+      "expected_jumps": 0,
+      "description": "蓝色背景：举狗尾巴草，在镜头前左右晃、戳向镜头；草会挡住脸，但场景不变。",
+      "beats": [
+        {"name": "举草", "t_ms": 0, "tol_ms": 500},
+        {"name": "甩草遮脸", "t_ms": 3140, "tol_ms": 700},
+        {"name": "戳向镜头", "t_ms": 6500, "tol_ms": 600}
+      ]
+    },
+    {
+      "case": "4EA6D975D8733C1C0A7FCC3656E31995",
+      "file": "4EA6D975D8733C1C0A7FCC3656E31995.gif",
+      "duration_ms": 3900,
+      "expected_jumps": 0,
+      "description": "床上：Q 版站在被褥上 → 画外手扔来枕头 → 被砸飞弹起 → 趴回床上。",
+      "beats": [
+        {"name": "站", "t_ms": 0, "tol_ms": 500},
+        {"name": "枕头飞来", "t_ms": 1600, "tol_ms": 500},
+        {"name": "被砸", "t_ms": 2000, "tol_ms": 400},
+        {"name": "趴回床上", "t_ms": 3800, "tol_ms": 400}
+      ]
+    },
+    {
+      "case": "7FEB28DEECB970F7B97592D223A0FCE9",
+      "file": "7FEB28DEECB970F7B97592D223A0FCE9.gif",
+      "duration_ms": 7140,
+      "expected_jumps": 0,
+      "description": "像素风背影：走在亮色地面/蓝绿城市背景里，最后转身面向镜头。",
+      "beats": [
+        {"name": "走", "t_ms": 70, "tol_ms": 600},
+        {"name": "转身", "t_ms": 5470, "tol_ms": 500},
+        {"name": "面向镜头", "t_ms": 6900, "tol_ms": 500}
+      ]
+    },
+    {
+      "case": "83B7182C27D6098C68697E1EE08AA385",
+      "file": "83B7182C27D6098C68697E1EE08AA385.gif",
+      "duration_ms": 6660,
+      "expected_jumps": 0,
+      "description": "白色毛线帽+鲸鱼毛衣：站立 → 走路 → 手放到头边 → 闭眼蹲下；一个连续场景。",
+      "beats": [
+        {"name": "站立/起步", "t_ms": 0, "tol_ms": 1500},
+        {"name": "走路", "t_ms": 1500, "tol_ms": 700},
+        {"name": "手放到头边", "t_ms": 4020, "tol_ms": 500},
+        {"name": "闭眼蹲下", "t_ms": 5700, "tol_ms": 400}
+      ]
+    },
+    {
+      "case": "86C6BAB00D8486EC6DFFAD773EC886A6",
+      "file": "86C6BAB00D8486EC6DFFAD773EC886A6.gif",
+      "duration_ms": 2580,
+      "expected_jumps": 0,
+      "description": "一大一小：等身大肥鱼挥手打招呼，另一只手拎着暴怒大哭的 Q 版自己。",
+      "beats": [
+        {"name": "挥手", "t_ms": 0, "tol_ms": 400},
+        {"name": "小只大哭", "t_ms": 1000, "tol_ms": 600},
+        {"name": "再挥手", "t_ms": 2040, "tol_ms": 500}
+      ]
+    },
+    {
+      "case": "A45CF7C52D965A7E67B2FD571AF1F4CE",
+      "file": "A45CF7C52D965A7E67B2FD571AF1F4CE.gif",
+      "duration_ms": 7070,
+      "expected_jumps": 0,
+      "description": "街边：扛着铲子站、把铲子立在地上，然后走开；旁边一辆白车。",
+      "beats": [
+        {"name": "扛铲子站", "t_ms": 0, "tol_ms": 500},
+        {"name": "立铲子", "t_ms": 2600, "tol_ms": 600},
+        {"name": "走开", "t_ms": 6800, "tol_ms": 600}
+      ]
+    },
+    {
+      "case": "AFF4149B2F736D28F91220ADD331C34C",
+      "file": "AFF4149B2F736D28F91220ADD331C34C.gif",
+      "duration_ms": 1340,
+      "expected_jumps": 0,
+      "description": "端碗生气：站在金属大盆前举拳跺脚，旁边有穿白衣的大人的腿。素材只有 1.3 秒、12 帧，画面变化小。",
+      "beats": [
+        {"name": "站", "t_ms": 0, "tol_ms": 300},
+        {"name": "举拳/跺脚", "t_ms": 790, "tol_ms": 500},
+        {"name": "再跺", "t_ms": 1230, "tol_ms": 300}
+      ]
+    },
+    {
+      "case": "C3ACBFAB273FB38FCCBBBE36A6D78433",
+      "file": "C3ACBFAB273FB38FCCBBBE36A6D78433.gif",
+      "duration_ms": 2700,
+      "expected_jumps": 0,
+      "description": "木地板暖阳：闭眼、双手交叠在身前，左右摇晃；一个连续镜头。",
+      "beats": [
+        {"name": "闭眼站定", "t_ms": 0, "tol_ms": 400},
+        {"name": "左摇", "t_ms": 1200, "tol_ms": 500},
+        {"name": "右摇", "t_ms": 2200, "tol_ms": 500}
+      ]
+    },
+    {
+      "case": "EEEC927EED0DF736E98B25CAD3297740",
+      "file": "EEEC927EED0DF736E98B25CAD3297740.jpg",
+      "duration_ms": 5370,
+      "expected_jumps": 1,
+      "description": "墙角暗处：一束光突然打过来，她捂脸；光照是画面里唯一一次突变。",
+      "beats": [
+        {"name": "暗处", "t_ms": 330, "tol_ms": 500},
+        {"name": "光打过来", "t_ms": 2010, "tol_ms": 400},
+        {"name": "捂脸", "t_ms": 3930, "tol_ms": 600}
+      ]
+    },
+    {
+      "case": "a27c148cdf3fc59a02d3f440746e27ae",
+      "file": "a27c148cdf3fc59a02d3f440746e27ae.gif",
+      "duration_ms": 1990,
+      "expected_jumps": 0,
+      "description": "雪地：鲸鱼连帽披风+白蕾丝头饰，抱一个大雪球在雪里蹦跳，背景雪灌木和脚印。",
+      "beats": [
+        {"name": "抱雪球", "t_ms": 0, "tol_ms": 400},
+        {"name": "跳", "t_ms": 1070, "tol_ms": 400},
+        {"name": "落地", "t_ms": 1930, "tol_ms": 300}
+      ]
+    },
+    {
+      "case": "eef3be4e90f21a1f86bcc142a10d6e571660229604",
+      "file": "eef3be4e90f21a1f86bcc142a10d6e571660229604.gif",
+      "duration_ms": 7300,
+      "expected_jumps": 0,
+      "description": "橙发 Claude 坐着，手揉 Q 版大肥鱼的头，她一脸不情愿；一个连续镜头。",
+      "beats": [
+        {"name": "两人同框", "t_ms": 2500, "tol_ms": 700},
+        {"name": "揉头", "t_ms": 5200, "tol_ms": 500},
+        {"name": "继续揉", "t_ms": 6200, "tol_ms": 500}
+      ]
+    }
+  ]
+}
