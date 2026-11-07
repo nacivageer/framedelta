@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""12 个 GIF 例图的结构回归：假 jump、代表帧重复、时间覆盖与 beat 覆盖。
+"""12 个 GIF 例图的结构回归：切点、代表帧重复、时间覆盖与 beat 覆盖。
 
-真值在 eval/gifs/truth.json（全帧结论来自识图库第 3 条 + 抽帧复核）。
+真值在 eval/gifs/truth.json。**jump 的真值分两类**：`verified_jumps` 是 2026-11-08
+逐帧确认的真切点，`known_false_jumps` 是逐帧确认的误报帧号。所以这里不再把
+「报多了」一律算失败：已知误报照报不罚，只有**新误报**与**漏掉的切点**才判失败。
 不约读图方、不花 token；只量「产物自己有没有硬伤」：
 
-  - jumps 数与 expected_jumps 的差（快动作被当硬切）
+  - 新误报（不在 verified / known_false 里的 jump）与漏切点
   - 代表帧两两 NCC ≥ same_picture_ncc 的重复对
   - 首/末覆盖与最大空档（末帧同图时不算漏）
   - beats 里每个时刻 ±tol 内有没有代表帧
@@ -15,6 +17,7 @@
     python tools/gifcheck.py                    # 有产物就复用，没有就跑
     python tools/gifcheck.py --refresh          # 12 个全部重跑（约 45s）
     python tools/gifcheck.py --strict           # 有硬伤时退出码 1（给以后接 CI）
+    python tools/gifcheck.py --strict-jumps     # 新误报 / 漏切点也返回 1
 """
 import argparse
 import json
@@ -78,9 +81,30 @@ def check_case(case, gif_dir, runs_dir, same_ncc, default_tail_tol, refresh):
     budget = dg.get("budget") or {}
     jumps = dg.get("jumps") or []
 
+    # 真值分三类：逐帧确认的切点（verified_jumps）、逐帧确认的误报帧号
+    # （known_false_jumps）、什么也没有的老真值（只比数量）。
+    # 判据来源见 eval/gifs/truth.json 的 jump_truth_note。
     exp_j = int(case.get("expected_jumps", 0))
-    false_j = max(0, len(jumps) - exp_j)
-    missed_j = max(0, exp_j - len(jumps))
+    verified = [int(v["frame"]) for v in (case.get("verified_jumps") or [])]
+    known_false = [int(f) for f in (case.get("known_false_jumps") or [])]
+    reported = [int(j["frame"]) for j in jumps]
+    tol_frames = int(case.get("jump_match_tol", 2))
+
+    def near(frame, targets):
+        return any(abs(frame - t) <= tol_frames for t in targets)
+
+    if verified or known_false:
+        extra = [f for f in reported if not near(f, verified) and not near(f, known_false)]
+        missed = [f for f in verified if not near(f, reported)]
+        known_hit = [f for f in reported if near(f, known_false) and not near(f, verified)]
+        known_gone = [f for f in known_false if not near(f, reported)]
+        false_j, missed_j = len(extra), len(missed)
+    else:
+        # 老真值：只有 expected_jumps 计数，多的都算误报（兼容路径）
+        extra, missed, known_hit, known_gone = [], [], [], []
+        false_j = max(0, len(jumps) - exp_j)
+        missed_j = max(0, exp_j - len(jumps))
+    cuts_found = len(verified) - missed_j
 
     frames, _, _ = g.load_frames(g.Path(src), None)
     pairs = ncc_pairs(frames, kfs)
@@ -115,6 +139,9 @@ def check_case(case, gif_dir, runs_dir, same_ncc, default_tail_tol, refresh):
     return {
         "case": stem, "file": case["file"], "duration_ms": dur,
         "jumps": len(jumps), "expected_jumps": exp_j,
+        "cuts_expected": len(verified), "cuts_found": cuts_found,
+        "extra_jumps": extra, "missed_jump_frames": missed,
+        "known_false_hit": known_hit, "known_false_gone": known_gone,
         "false_jumps": false_j, "missed_jumps": missed_j,
         "jump_ok": false_j == 0 and missed_j == 0,
         "images": len(kfs), "k": budget.get("k"), "budget_images": budget.get("images"),
@@ -141,7 +168,7 @@ def main(argv=None):
     ap.add_argument("--strict", action="store_true",
                     help="结构有硬伤（重复格/尾空/漏 jump）时返回 1")
     ap.add_argument("--strict-jumps", action="store_true",
-                    help="把假 jump 也当失败（当前 5 段已知，先不接 CI）")
+                    help="新误报或漏切点也返回 1（已知误报不罚；真值里没有逐帧核过的段只比数量）")
     ap.add_argument("--json", default=os.path.join(ROOT, "runs", "_gifcheck", "report.json"))
     a = ap.parse_args(argv)
 
@@ -164,7 +191,7 @@ def main(argv=None):
                          "beat_total": len(case.get("beats") or []), "images": 0, "k": 0})
 
     print("%-34s %4s %4s %4s %4s %5s %6s %6s %6s  %s"
-          % ("case", "jump", "exp", "dup", "img", "beat", "first", "last", "tail", "verdict"))
+          % ("case", "jump", "cut", "dup", "img", "beat", "first", "last", "tail", "verdict"))
     bad = 0
     for r in rows:
         if r.get("error"):
@@ -172,10 +199,12 @@ def main(argv=None):
             bad += 1
             continue
         flags = []
-        if r["false_jumps"]:
-            flags.append("假jump%d" % r["false_jumps"])
-        if r["missed_jumps"]:
-            flags.append("漏jump%d" % r["missed_jumps"])
+        if r.get("extra_jumps"):
+            flags.append("新误报%d@%s" % (len(r["extra_jumps"]), ",".join(str(f) for f in r["extra_jumps"][:4])))
+        if r.get("missed_jump_frames"):
+            flags.append("漏切点%d" % len(r["missed_jump_frames"]))
+        if r.get("known_false_hit"):
+            flags.append("已知误报%d" % len(r["known_false_hit"]))
         if r["dup_pairs"]:
             flags.append("重复%d" % len(r["dup_pairs"]))
         if not r["tail_ok"]:
@@ -185,20 +214,25 @@ def main(argv=None):
         verdict = "ok" if not flags else " ".join(flags)
         if r["hard"]:
             bad += 1
-        print("%-34s %4d %4d %4d %4d %2d/%-2d %6.0f %6.0f %6.0f  %s"
-              % (r["case"][:34], r["jumps"], r["expected_jumps"], len(r["dup_pairs"]),
-                 r["images"], r["beat_covered"], r["beat_total"],
+        print("%-34s %4d %4s %4d %4d %2d/%-2d %6.0f %6.0f %6.0f  %s"
+              % (r["case"][:34], r["jumps"],
+                 ("%d/%d" % (r["cuts_found"], r["cuts_expected"])) if r["cuts_expected"] else "-",
+                 len(r["dup_pairs"]), r["images"], r["beat_covered"], r["beat_total"],
                  r["first_ms"] or 0, r["last_ms"] or 0, r["tail_gap_ms"], verdict))
 
     total_j = sum(r.get("jumps", 0) for r in rows)
     total_false = sum(r.get("false_jumps", 0) for r in rows)
+    total_cut = sum(r.get("cuts_expected", 0) for r in rows)
+    total_cut_found = sum(r.get("cuts_found", 0) for r in rows)
+    total_known = sum(len(r.get("known_false_hit") or []) for r in rows)
     total_dups = sum(len(r.get("dup_pairs") or []) for r in rows)
     total_beats = sum(r.get("beat_total", 0) for r in rows)
     total_beat_ok = sum(r.get("beat_covered", 0) for r in rows)
     tail_bad = sum(1 for r in rows if not r.get("tail_ok", True) and not r.get("error"))
     jump_bad = sum(1 for r in rows if not r.get("jump_ok", True))
-    print("\n汇总：jumps %d（假 %d，%d 段）/ 重复对 %d / beat %d/%d / 尾空 %d 段 / 硬伤 %d 段"
-          % (total_j, total_false, jump_bad, total_dups, total_beat_ok, total_beats,
+    print("\n汇总：jumps 报 %d（真切点 %d/%d 命中 · 已知误报 %d · 新误报 %d · 漏 %d）/ 重复对 %d / beat %d/%d / 尾空 %d 段 / 硬伤 %d 段"
+          % (total_j, total_cut_found, total_cut, total_known, total_false,
+             total_cut - total_cut_found, total_dups, total_beat_ok, total_beats,
              tail_bad, bad))
 
     os.makedirs(os.path.dirname(a.json), exist_ok=True)
