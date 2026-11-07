@@ -15,4 +15,6 @@ python gif_digest.py D:\clip.mp4 --max-frames 90 --out runs\mp4
 
 依赖：Python 3.10+、numpy、Pillow；读 mp4 需要 PATH 上有 `ffmpeg`/`ffprobe`。
 
-状态：v1 已跑通（2026-11-07）。设计、阈值口径与回归数字见 `docs/决策记录.md`。
+切点标定：`python tools/calib.py`（拼接已知切点的视频片段，扫阈值出精确率/召回），报告写 `runs/calib/report.json`。
+
+状态：v1 已跑通（2026-11-07）。设计、阈值口径、标定结果与回归数字见 `docs/决策记录.md`。

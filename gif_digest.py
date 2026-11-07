@@ -52,6 +52,8 @@ TH = {
     "subtle_energy": 12.0,        # 微动：能量小 + 局部位移小 + 几乎不缩放
     "subtle_local_mag": 1.5,
     "subtle_scale": 0.02,
+    "spike_factor": 1.5,          # 突变必须是邻域尖峰：hsv ≥ factor×邻域中位数 + offset
+    "spike_offset": 3.0,
     "transition_gap_ms": 250,     # 相邻突变间隔小于此值 → 同一次转场
 }
 
@@ -373,8 +375,8 @@ def resample_indices(frames, durs, fps: float | None, max_frames: int | None):
     return idx
 
 
-def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE):
-    """逐对计算变化分、能量、运动。返回 pairs 与工作分辨率灰度帧。"""
+def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE, classify=True):
+    """逐对测量变化分、能量、运动；默认顺带分类（classify=False 供标定扫参用）。"""
     sel = [frames[i] for i in idx]
     times = np.cumsum([0] + [durs[i] for i in idx[:-1]])  # ms，起点
     h0, w0 = sel[0].shape[:2]
@@ -395,36 +397,39 @@ def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE):
         diff = np.abs(origs[k] - origs[k - 1])
         energy = float(diff.mean())
         changed = float((diff > 12).mean())
-        kind = "motion"
-        if ncc < TH["jump_ncc_hard"] or (sc_hsv >= TH["jump_hsv_score"]
-                                        and ncc < TH["jump_ncc"]):
-            kind = "jump"
-        elif energy < TH["still_energy"] and changed < TH["still_changed_frac"]:
-            kind = "still"
         mot = estimate_motion(ga, gb)
         if mot and sc != 1.0:
             # 工作分辨率 → 源像素
             mot["dx"] /= sc
             mot["dy"] /= sc
             mot["local_mag"] /= sc
+            mot["local_mag_mean"] /= sc
             if mot["resid"] == mot["resid"]:
                 mot["resid"] /= sc
-        if kind == "motion" and mot and energy < TH["subtle_energy"] \
-                and mot["local_mag"] < TH["subtle_local_mag"] \
-                and abs(mot["scale"] - 1) < TH["subtle_scale"]:
-            kind = "subtle"
-        if kind == "still":
-            mot = {"dx": 0.0, "dy": 0.0, "scale": 1.0, "resid": 0.0,
-                   "valid": mot["valid"], "inliers": mot["inliers"],
-                   "coherence": mot["coherence"], "pts": mot["pts"],
-                   "field": mot["field"], "field_w": mot["field_w"],
-                   "local_mag": 0.0, "local_mag_mean": 0.0, "local_frac": 0.0}
         pairs.append({
             "frame": k, "t_ms": float(times[k]), "t_start_ms": float(times[k - 1]),
             "hsv": sc_hsv, "ncc": ncc,
-            "energy": energy, "changed_frac": changed, "kind": kind,
+            "energy": energy, "changed_frac": changed, "kind": "motion",
             "motion": mot,
         })
+    if classify:
+        classify_pairs(pairs, TH)
+    return {
+        "idx": idx, "times": times, "wh": wh, "grays": grays, "pairs": pairs,
+    }
+
+
+def classify_pairs(pairs, th=None):
+    """把测量结果分成 still / subtle / motion / jump（可传入自定义阈值供扫参）。"""
+    th = {**TH, **(th or {})}
+    for p in pairs:
+        kind = "motion"
+        if p["ncc"] < th["jump_ncc_hard"] or (p["hsv"] >= th["jump_hsv_score"]
+                                              and p["ncc"] < th["jump_ncc"]):
+            kind = "jump"
+        elif p["energy"] < th["still_energy"] and p["changed_frac"] < th["still_changed_frac"]:
+            kind = "still"
+        p["kind"] = kind
     # 突变要相对邻近帧是「尖峰」：连续快动作（游戏画面、快速运镜）不该串成一堆切镜头
     hs = np.array([p["hsv"] for p in pairs])
     for i, p in enumerate(pairs):
@@ -432,11 +437,20 @@ def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE):
         win = [hs[j] for j in range(lo, hi) if j != i]
         base = float(np.median(win)) if win else 0.0
         p["hsv_base"] = base
-        if p["kind"] == "jump" and p["hsv"] < 1.5 * base + 3.0:
-            p["kind"] = "subtle" if p["energy"] < TH["subtle_energy"] else "motion"
-    return {
-        "idx": idx, "times": times, "wh": wh, "grays": grays, "pairs": pairs,
-    }
+        if p["kind"] == "jump" and p["hsv"] < th["spike_factor"] * base + th["spike_offset"]:
+            p["kind"] = "subtle" if p["energy"] < th["subtle_energy"] else "motion"
+    for p in pairs:
+        mot = p["motion"]
+        if p["kind"] == "motion" and mot and p["energy"] < th["subtle_energy"] \
+                and mot["local_mag"] < th["subtle_local_mag"] \
+                and abs(mot["scale"] - 1) < th["subtle_scale"]:
+            p["kind"] = "subtle"
+        if p["kind"] == "still" and mot:
+            p["motion"] = {"dx": 0.0, "dy": 0.0, "scale": 1.0, "resid": 0.0,
+                           "valid": mot["valid"], "inliers": mot["inliers"],
+                           "coherence": mot["coherence"], "pts": mot["pts"],
+                           "field": mot["field"], "field_w": mot["field_w"],
+                           "local_mag": 0.0, "local_mag_mean": 0.0, "local_frac": 0.0}
 
 
 def segments_of(pairs):
@@ -791,6 +805,11 @@ def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
 def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
           cell_w=180):
     frames, durs, loop = load_frames(input_path, fps)
+    ext = input_path.suffix.lower()
+    source_type = ('dir' if input_path.is_dir()
+                   else 'gif' if ext == '.gif'
+                   else 'video' if ext in {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
+                   else 'image')
     n = len(frames)
     raw_durs = list(durs)
     pos = [d for d in raw_durs if d > 0]
@@ -837,6 +856,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=4,
     meta = {
         "schema": "framedelta/meta@1",
         "source": str(input_path),
+        "source_type": source_type,
         "width": int(frames[0].shape[1]), "height": int(frames[0].shape[0]),
         "frames": n, "duration_ms": int(total_ms),
         "duration_ms_raw": int(sum(raw_durs)),
