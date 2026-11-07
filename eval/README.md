@@ -52,6 +52,8 @@
 
 见 `docs/决策记录.md` 的「评测（L2/L3 端到端）」一节。第二轮起产物自带 `Δarea`（每张代表帧相对上一帧的变化像素占比，`annotated.png` 头行、`sheet.png` 每格、`digest.key_frames[].delta` 三处一致）；第三轮起 `digest.json` 多两类事件：`swaps`（布局不变的大块内容替换）与 `drifts`（连续中等变化累积成的一次变化）。
 
+长片段的预算对照（4 张 vs 6 张，两臂各一个独立读图方）也在那一节：**6 张没有比 4 张读得更准**（11/16 对 12/16），原因是多出来的槽位被「切点前后对照对」吃掉，而不是去补中段覆盖。原始答案：`answers_L1-L3_k4.json` / `answers_L1-L3_k6.json` / `answers_tool_long.json`（工具自报基线）。
+
 ## 重跑
 
 ```
@@ -59,6 +61,13 @@ python tools/scan.py <视频> --topk 3                     # 找变化窗口
 ffmpeg -ss <t> -t 3 -i <视频> -an -c:v libx264 -crf 20 runs/eval/_clips/<case>.mp4
 python gif_digest.py runs/eval/_clips/<case>.mp4 --out runs/eval/<case>
 python tools/uniform.py runs/eval/_clips/<case>.mp4 --n 8 --out runs/eval/_uniform/<case>.png
+```
+
+核真值一律按帧号取帧（`digest.json` 里 `jumps[].frame` 就是帧号）：
+
+```
+python tools/frames.py runs/eval/_clips/L1_trailer.mp4 --out runs/_probe/x.png 448 449 450 451
+python tools/frames.py runs/eval/_clips/L1_trailer.mp4 --out x.png --around 451 3
 ```
 
 预算对照实验（同一段、同一批问题，只差给几张图）：
