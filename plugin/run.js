@@ -57,15 +57,66 @@ export function resolveInput(input, bases) {
 
 /* ---- 缓存目录 ------------------------------------------------------------ */
 
+/**
+ * 目录输入的内容指纹。
+ *
+ * 目录自己的 mtime 不随子文件「内容被覆盖」变化，只数条目数也不够：帧序列换了同名
+ * 文件时，路径 / size / mtime / 条目数可以全都不变，缓存会一直命中旧产物。
+ * 所以对每个直接子文件取 `名字|大小|mtime`，排序后一起 hash。
+ */
+function dirSignature(path) {
+  const rows = [];
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      rows.push(`${entry.name}|dir`);
+      continue;
+    }
+    try {
+      const st = statSync(join(path, entry.name));
+      rows.push(`${entry.name}|${st.size}|${Math.round(st.mtimeMs)}`);
+    } catch {
+      rows.push(`${entry.name}|?`);
+    }
+  }
+  rows.sort();
+  return createHash('sha1').update(rows.join('\n')).digest('hex').slice(0, 16);
+}
+
 function inputFingerprint(path) {
   const st = statSync(path);
-  let extra = '';
   if (st.isDirectory()) {
+    let sig = '';
     try {
-      extra = String(readdirSync(path).length);
-    } catch { /* 目录读不了就让 mtime 兜底 */ }
+      sig = dirSignature(path);
+    } catch { /* 目录读不了就让目录自身的 mtime 兜底 */ }
+    return `${path}|dir|${st.size}|${Math.round(st.mtimeMs)}|${sig}`;
   }
-  return `${path}|${st.size}|${Math.round(st.mtimeMs)}|${extra}`;
+  return `${path}|${st.size}|${Math.round(st.mtimeMs)}`;
+}
+
+/** 输入（文件或目录下任一文件）的最新 mtime；产物比它新才算命中。 */
+function newestMtime(path) {
+  const st = statSync(path);
+  if (!st.isDirectory()) return st.mtimeMs;
+  let newest = st.mtimeMs;
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    try {
+      newest = Math.max(newest, statSync(join(path, entry.name)).mtimeMs);
+    } catch { /* 读不到的条目跳过 */ }
+  }
+  return newest;
+}
+
+/**
+ * 显式给 `out` 时不能只看 digest.json 在不在：路径是固定的，源或参数变了它也在。
+ * 产物比输入旧就重跑——与 README 的「动一下素材」承诺一致。
+ */
+function digestIsFresh(digestPath, input) {
+  try {
+    return statSync(digestPath).mtimeMs >= newestMtime(input);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -197,7 +248,7 @@ export function formatDigest(digest, { outDir, reused, ms, name } = {}) {
     meta.fps ? `${fmtNum(meta.fps)}fps` : null,
     `picks ${cells}/${budget.k ?? cells}`,
     budget.mode === 'auto' ? 'auto' : 'fixed',
-    reused ? 'cached' : `${(ms / 1000).toFixed(1)}s`,
+    reused ? 'cached' : `${((ms ?? 0) / 1000).toFixed(1)}s`,
   ].filter(Boolean).join(' · ');
 
   const countLine = [
@@ -233,7 +284,7 @@ export async function runFramedelta({ args = {}, ctx, exec, config = {}, env = p
 
   const outDir = args.out ? resolve(bases[0], String(args.out)) : outDirFor({ input, key, fps, maxFrames, env });
   const digestPath = join(outDir, DIGEST);
-  const reusable = existsSync(digestPath);
+  const reusable = existsSync(digestPath) && digestIsFresh(digestPath, input);
 
   let run = { ms: 0 };
   if (!reusable) run = await runPython({ script, input, outDir, key, fps, maxFrames, config, env });
