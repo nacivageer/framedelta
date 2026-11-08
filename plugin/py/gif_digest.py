@@ -8,7 +8,7 @@
     sheet.png     总览拼图
     flow.csv      逐帧位移 / 缩放估计
     kymograph.png 时间切片
-    annotated.png 3–4 代表帧 + 运动箭头
+    annotated.png k 张代表帧（按时长自适应 4–8）+ 运动箭头
     digest.json   区间化摘要、切点、选帧理由
 
 用法：
@@ -49,7 +49,7 @@ KEY_BUDGET = {"base": 4, "free_ms": 8000, "per_ms": 4000, "cap": 8}
 KEY_BUDGET_RULE = "≤8s 4 张；超过 8s 后每 4 秒 +1（向上取整）；上限 8"
 
 # 代表帧去重（2026-11-08）：两格 NCC ≥ 0.90 就是同一张画面（同一页幻灯片 0.95–0.98，
-# 同场景换机位 0.3–0.5）。只对 >8s 的输入启用，≤8s 的产物保持不变。
+# 同场景换机位 0.3–0.5）。对所有输入与重采样路径都启用（不再只看 >8s）。
 _KEY_SAME_PICTURE = 0.90
 
 TH = {
@@ -156,8 +156,8 @@ def _ffprobe_size(path: Path):
 
 
 def load_video(path: Path):
-    if shutil.which("ffmpeg") is None:
-        raise SystemExit("找不到 ffmpeg，无法读 mp4（GIF / 帧目录不受影响）")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise SystemExit("找不到 ffmpeg / ffprobe，无法读 mp4（GIF / 帧目录不受影响）")
     w, h = _ffprobe_size(path)
     raw = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo",
@@ -418,7 +418,11 @@ def resample_indices(frames, durs, fps: float | None, max_frames: int | None):
 def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE, classify=True):
     """逐对测量变化分、能量、运动；默认顺带分类（classify=False 供标定扫参用）。"""
     sel = [frames[i] for i in idx]
-    times = np.cumsum([0] + [durs[i] for i in idx[:-1]])  # ms，起点
+    # 时间轴按「源帧起点」取。用选中帧自己的时长累加会在 --fps / --max-frames 下把
+    # 整条轴压成 len(idx) × 单帧时长（15s 报成 4.9s），而 transition_gap / fade 的
+    # 毫秒阈值又都吃这个轴——不只是标签错，检测结果也会跟着漂。
+    all_times = np.cumsum([0.0] + [float(d) for d in durs[:-1]])
+    times = all_times[np.asarray(idx, dtype=int)]  # ms，每帧起点
     h0, w0 = sel[0].shape[:2]
     # 小图放大到工作分辨率，让亚像素位移有可分辨的尺度；大图缩到 256
     sc = min(2.0, work_side / max(h0, w0))
@@ -1435,29 +1439,36 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         shots_grid.append(t)
     # 先判 swap/drift，再选代表帧——「变化的那一帧」要参与选帧
     swaps, drifts = content_events(pairs, frames, idx, times)
-    skip_spans = [(d["start_frame"], d["end_frame"]) for d in drifts] + \
-                 [(s["frame"] - 1, s["frame"]) for s in swaps]
+
+    # 对外一律用源帧号。pairs / content_events 的下标是「分析网格」，而 key_frames、
+    # shots、transitions 一直是源帧号；重采样时两套坐标混在一起，jumps[].frame 拿去
+    # tools/frames.py 会取错帧（2026-11-08 实测：L3 报 #82 是静止页，#247 才是切点）。
+    def to_source(fi):
+        fi = int(fi)
+        return int(idx[fi]) if 0 <= fi < len(idx) else fi
+
+    skip_spans = [(to_source(d["start_frame"]), to_source(d["end_frame"])) for d in drifts] + \
+                 [(to_source(s["frame"] - 1), to_source(s["frame"])) for s in swaps]
     fades = fade_events(pairs, frames, idx, times, total_ms, skip_spans=skip_spans)
     budget = key_budget(total_ms, key_n)
     k_want = budget["k"]
     # 代表帧去重与末态保证：2026-11-08 从 >8s 下放到所有输入。
     # 12 个 GIF 例图暴露 ≤8s 也有硬伤（86C6/AFF4/C3AC 重复格、381C/7FEB 缺尾帧）；
     # 短片段尾段有 jump 时仍允许末帧——GIF 的 jump 多是快动作，末帧往往就是最后一个可读状态。
-    similar, tail = None, False
-    if len(idx) == n:
-        grid_cache = {}
+    # 索引是「分析网格」，取帧时再下标回 idx，所以重采样下这两条同样成立（以前被
+    # len(idx)==n 关掉，等于让 --fps / --max-frames 静默退化）。
+    grid_cache = {}
 
-        def similar(i, j, _c=grid_cache):
-            for g in (i, j):
-                if g not in _c:
-                    _c[g] = grid_rgb(frames[idx[g]])
-            return grid_ncc(_c[i], _c[j])
+    def similar(i, j, _c=grid_cache):
+        for g in (i, j):
+            if g not in _c:
+                _c[g] = grid_rgb(frames[idx[g]])
+        return grid_ncc(_c[i], _c[j])
 
-        if total_ms > KEY_BUDGET["free_ms"]:
-            last_start = shots_grid[-1]["start_frame"] if shots_grid else 0
-            tail = not any(p["kind"] == "jump" and p["frame"] > last_start for p in pairs)
-        else:
-            tail = True
+    tail = True
+    if total_ms > KEY_BUDGET["free_ms"]:
+        last_start = shots_grid[-1]["start_frame"] if shots_grid else 0
+        tail = not any(p["kind"] == "jump" and p["frame"] > last_start for p in pairs)
     picked = pick_key_frames(pairs, n, k_want, shots=shots_grid,
                              swaps=swaps, drifts=drifts,
                              multi_cut=len(struct["transitions"]) > 1,
@@ -1541,14 +1552,15 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     render_annotated(frames, idx, times, keys, analyses, out_dir / "annotated.png")
 
     # digest.json
-    jumps = [{"frame": p["frame"], "t_ms": p["t_ms"], "hsv_score": round(p["hsv"], 2),
+    jumps = [{"frame": to_source(p["frame"]), "t_ms": p["t_ms"], "hsv_score": round(p["hsv"], 2),
               "ncc": round(p["ncc"], 3), "energy": round(p["energy"], 2),
               "changed_frac": round(p["changed_frac"], 3),
               "coherence": round(p["motion"]["coherence"], 3) if p["motion"] else None,
               "resid_px": round(p["motion"]["resid"], 2)
               if p["motion"] and p["motion"]["resid"] == p["motion"]["resid"] else None}
              for p in pairs if p["kind"] == "jump"]
-    intervals = [{"kind": s["kind"], "start_frame": s["start_frame"], "end_frame": s["end_frame"],
+    intervals = [{"kind": s["kind"], "start_frame": to_source(s["start_frame"]),
+                  "end_frame": to_source(s["end_frame"]),
                   "start_ms": round(s["start_t_ms"], 1), "end_ms": round(s["end_t_ms"], 1),
                   "duration_ms": round(s["duration_ms"], 1),
                   "energy_max": round(s["energy_max"], 2),
@@ -1560,6 +1572,10 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     hot = hotspot(pairs)
     transitions = [{k: v for k, v in t.items() if k != "_grid"} for t in struct["transitions"]]
     shots = [{k: v for k, v in s.items() if k != "_grid"} for s in struct["shots"]]
+    # 事件对外也用源帧号（见上面 to_source 的说明）；counts 与选帧仍用内部网格。
+    swaps_out = [{**s, "frame": to_source(s["frame"])} for s in swaps]
+    drifts_out = [{**d, "start_frame": to_source(d["start_frame"]),
+                   "end_frame": to_source(d["end_frame"])} for d in drifts]
     digest = {
         "schema": SCHEMA,
         "source": str(input_path),
@@ -1579,8 +1595,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
             "fades": len(fades),
         },
         "jumps": jumps,
-        "swaps": swaps,
-        "drifts": drifts,
+        "swaps": swaps_out,
+        "drifts": drifts_out,
         "fades": fades,
         "transitions": transitions,
         "shots": shots,

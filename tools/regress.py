@@ -145,8 +145,9 @@ def structural(d):
     if (meta.get("fps") or 0) <= 0:
         bad.append("meta.fps 非法：%r" % meta.get("fps"))
     pairs = (d.get("counts") or {}).get("pairs")
-    if meta.get("frames") and pairs is not None and pairs != max(meta["frames"] - 1, 0):
-        bad.append("counts.pairs=%r 与 frames=%r 不一致" % (pairs, meta["frames"]))
+    analysed = mfile.get("analysed_frames") or meta.get("frames")
+    if analysed and pairs is not None and pairs != max(analysed - 1, 0):
+        bad.append("counts.pairs=%r 与 analysed=%r 不一致" % (pairs, analysed))
     for j in d.get("jumps") or []:
         miss = [f for f in JUMP_FIELDS if j.get(f) is None]
         if miss:
@@ -165,7 +166,8 @@ def structural(d):
         bad.append("digest 缺 budget（读图方不知道该看几张图、该按什么预算打分）")
     else:
         k = budget.get("k")
-        if not isinstance(k, int) or not (1 <= k <= 8):
+        max_k = 16 if budget.get("mode") == "fixed" else 8
+        if not isinstance(k, int) or not (1 <= k <= max_k):
             bad.append("budget.k 非法：%r" % k)
         if budget.get("images") != len(kf):
             bad.append("budget.images=%r 与代表帧数 %d 不一致" % (budget.get("images"), len(kf)))
@@ -182,6 +184,18 @@ def structural(d):
         if k.get("t_ms") is None or not k.get("reason"):
             bad.append("代表帧缺 t_ms/reason：%r" % k)
             break
+    # 重采样后仍必须对得上：帧号在源帧空间，时间不超过源时长
+    frames_n = meta.get("frames")
+    dur_ms = meta.get("duration_ms")
+    if frames_n and dur_ms:
+        for j in d.get("jumps") or []:
+            if not (0 <= (j.get("frame") if j.get("frame") is not None else -1) < frames_n):
+                bad.append("jump.frame 越界：%r（frames=%r）" % (j.get("frame"), frames_n))
+                break
+        for k in kf:
+            if k.get("t_ms") is not None and k["t_ms"] > dur_ms + 1:
+                bad.append("代表帧 t_ms 超过 duration：%r > %r" % (k["t_ms"], dur_ms))
+                break
     shots = d.get("shots") or []
     frames = meta.get("frames")
     if not shots:
