@@ -197,7 +197,8 @@ function eventLines(digest) {
     }
   };
   push('jumps', digest.jumps, (j) =>
-    `jump  #${j.frame}  ${fmtSec(j.t_ms)}  area ${fmtPct(j.changed_frac)}  hsv ${fmtNum(j.hsv_score)}  ncc ${fmtNum(j.ncc, 2)}`);
+    `jump  #${j.frame}  ${fmtSec(j.t_ms)}  area ${fmtPct(j.changed_frac)}  hsv ${fmtNum(j.hsv_score)}  ncc ${fmtNum(j.ncc, 2)}`
+    + (j.occlusion_like ? `  occlusion-like (burst ${j.burst})` : ''));
   push('swaps', digest.swaps, (s) =>
     `swap  #${s.frame}  ${fmtSec(s.t_ms)}  area ${fmtPct(s.changed_frac)}  ncc ${fmtNum(s.ncc, 2)}  neighbours quiet`);
   push('drifts', digest.drifts, (d) =>
@@ -262,6 +263,12 @@ export function formatDigest(digest, { outDir, reused, ms, name } = {}) {
 
   const frames = keyFrameLines(digest);
   const lines = [headline, countLine];
+  const occl = (digest.jumps ?? []).filter((j) => j.occlusion_like).length;
+  if (occl) {
+    lines.push(`note: ${occl} jump(s) are occlusion-like — a burst of ≥3 whole-frame spikes,`
+      + ' usually something passing in front of the lens (hat/hair/hand) or a fast wipe.'
+      + ' Do NOT count them as cuts; check the cells.');
+  }
   const events = eventLines(digest);
   lines.push(...(events.length ? events : [`no jump / swap / drift / fade above threshold`]));
   if (frames.length) lines.push('picks (frame numbers match the labels on the sheet):', ...frames);

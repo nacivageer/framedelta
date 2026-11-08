@@ -65,7 +65,11 @@ KNOWN = [
             "len.transitions": 3,
             "len.shots": 4,
         },
-        "why": "74 帧火焰：25 重复帧、16 jump、3 次转场、4 个镜头",
+        # 2026-11-08 逐帧核过：16 个 jump 全是遮挡假切（菲比三次凑近、帽檐挡满画面），
+        # 不是切点。数字保留是锁「当前行为」，不是真值；这些帧若还在 jumps 里，必须带
+        # occlusion_like 标记，否则说明标记失效。
+        "known_false_jumps": [9, 12, 13, 16, 17, 19, 46, 47, 50, 51, 53, 66, 67, 68, 69, 70],
+        "why": "74 帧火焰：25 重复帧、16 jump（全为遮挡假切，3 簇）、3 次转场、4 个镜头",
     },
 ]
 
@@ -234,6 +238,21 @@ def check_exact(d, expect):
     return bad
 
 
+def check_occlusion(d, known_false):
+    """已知假切如果还在 jumps 里，必须被标成 occlusion_like——标记失效时有人看。
+
+    不反向要求「这些帧必须还在」：将来判据能压掉遮挡假切是改进，不该被回归拦住。
+    """
+    by = {j.get("frame"): j for j in d.get("jumps") or []}
+    bad = []
+    for f in known_false:
+        j = by.get(f)
+        if j is not None and not j.get("occlusion_like"):
+            bad.append("已知假切 #%d 没被标 occlusion_like（burst=%r, area=%r, ncc=%r）"
+                       % (f, j.get("burst"), j.get("changed_frac"), j.get("ncc")))
+    return bad
+
+
 def check_tolerance(d, base, tol=0.15):
     drift = []
     for k, want in base.items():
@@ -285,6 +304,8 @@ def main():
                 got = local_mag_max(d)
                 if got >= cap["local_mag_max"]:
                     problems.append("local_mag_max 期望 < %.2f，实得 %.3f" % (cap["local_mag_max"], got))
+        if "known_false_jumps" in c:
+            problems += check_occlusion(d, c["known_false_jumps"])
         if "base" in c:
             tol = check_tolerance(d, c["base"])
             if tol:

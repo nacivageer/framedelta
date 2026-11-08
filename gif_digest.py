@@ -95,6 +95,11 @@ TH = {
     "fade_blank_lo": 20.0,
     "fade_blank_win_ms": 400.0,   # 亮度塌陷必须发生在这么短的窗口里
     "fade_blank_persist_ms": 120.0,  # 而且新亮度要维持住（排除闪白）
+    # jump 成簇时的遮挡/掠过提示（2026-11-08）：连续 ≥3 个 jump + 整幅换画 + 结构塌，
+    # 通常是镜头前掠过东西（帽檐、头发、手）或快速甩镜，不是剪辑点。只做标记，不改 jump。
+    "occlusion_burst_min": 3,
+    "occlusion_frac": 0.45,
+    "occlusion_ncc": 0.55,
 }
 
 
@@ -1552,9 +1557,22 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     render_annotated(frames, idx, times, keys, analyses, out_dir / "annotated.png")
 
     # digest.json
+    # jump 成簇时给读图方一个「这不是切点」的信号：连续 ≥3 个 jump 且整幅换画 + 结构塌，
+    # 通常是镜头前掠过东西（clip74 的帽檐挡镜头就是 3 簇 × 5–6 个 jump）。
+    # 只加标记，不改 jump 计数，也不改 shots——判据要动得先过标定集。
+    burst = {}
+    for t in struct["transitions"]:
+        lo, hi = t["_grid"]
+        for p in pairs:
+            if p["kind"] == "jump" and lo <= p["frame"] <= hi:
+                burst[p["frame"]] = t["jumps"]
     jumps = [{"frame": to_source(p["frame"]), "t_ms": p["t_ms"], "hsv_score": round(p["hsv"], 2),
               "ncc": round(p["ncc"], 3), "energy": round(p["energy"], 2),
               "changed_frac": round(p["changed_frac"], 3),
+              "burst": burst.get(p["frame"], 1),
+              "occlusion_like": bool(burst.get(p["frame"], 1) >= TH["occlusion_burst_min"]
+                                     and p["changed_frac"] >= TH["occlusion_frac"]
+                                     and p["ncc"] < TH["occlusion_ncc"]),
               "coherence": round(p["motion"]["coherence"], 3) if p["motion"] else None,
               "resid_px": round(p["motion"]["resid"], 2)
               if p["motion"] and p["motion"]["resid"] == p["motion"]["resid"] else None}
