@@ -1,6 +1,6 @@
 {
   "name": "dsh-framedelta",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "license": "MIT",
   "type": "module",
   "description": "Frame-change digest for short clips: jumps, replacements, cumulative drifts, fades, and one labelled contact sheet. · 把一段连续帧压成「变化描述 + 一张读得懂的图」。",
