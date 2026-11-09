@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把根目录的 gif_digest.py 同步进插件包（plugin/py/gif_digest.py）。
+"""把根目录的 gif_digest.py 同步进插件包（plugins/dsh-framedelta/py/gif_digest.py）。
 
 为什么要有这一份副本：插件包必须自包含 —— 装进 profile 的包不该回头去翻工作区的
 某个绝对路径。代价是"两份文件会漂移"，所以这份脚本负责同步，`--check` 负责在漂移时
@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "gif_digest.py"
-TARGET = ROOT / "plugin" / "py" / "gif_digest.py"
+TARGET = ROOT / "plugins" / "dsh-framedelta" / "py" / "gif_digest.py"
 
 
 def digest(path: Path) -> str:

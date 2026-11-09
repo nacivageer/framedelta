@@ -33,7 +33,7 @@ python -m pip install -r requirements.txt     # numpy>=1.24, Pillow>=10.1
 ```
 
 读 mp4 还需要 PATH 上有 `ffmpeg` / `ffprobe`（GIF 与帧序列目录不需要）。
-运行前提、插件安装与参数见 [`plugin/README.md`](plugin/README.md)。
+运行前提、插件安装与参数见 [`plugins/dsh-framedelta/README.md`](plugins/dsh-framedelta/README.md)。
 
 ## 30 秒上手
 
@@ -61,7 +61,7 @@ python gif_digest.py D:\clip.mp4 --max-frames 90 --out runs\mp4   # 长素材只
 
 ## 作为 Harness 插件用（`framedelta` 工具）
 
-`plugin/` 是一个 Host-only bundle（`dsh-framedelta`），用 Plugin Manager 的 `install_bundle` 指向本目录安装：
+`plugins/dsh-framedelta/` 是一个 Host-only bundle（`dsh-framedelta`），用 Plugin Manager 的 `install_bundle` 指向该目录安装：
 
 ```
 framedelta({ input: "D:\\clip.mp4" })          # 一次调用 = 一张拼图 + 文本时间线 + 产物目录
@@ -69,7 +69,7 @@ framedelta({ input: "...", maxFrames: 90 })    # 长素材先稀释
 ```
 
 返回里就带图，不用再 `read_image`；同样的输入与参数命中缓存（第二次是瞬时的）。
-**改完 `gif_digest.py` 要跑 `python tools/sync_plugin.py`**——插件跑的是 `plugin/py/` 下的副本，`--check` 会因漂移报错。
+**改完 `gif_digest.py` 要跑 `python tools/sync_plugin.py`**——插件跑的是 `plugins/dsh-framedelta/py/` 下的副本，`--check` 会因漂移报错。
 
 ## 已知限制
 
