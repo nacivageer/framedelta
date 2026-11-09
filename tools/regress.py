@@ -30,6 +30,28 @@ OUT_ROOT = os.path.join(ROOT, "runs", "_regress")
 DESKTOP = next((p for p in ("D:\\Desktop", os.path.join(os.path.expanduser("~"), "Desktop"))
                 if os.path.isdir(p)), "D:\\Desktop")
 
+# 保密素材的路径不写进仓库（本仓是公开的）：只留中性代号 clipA / clipB，
+# 真实路径放 runs/local/regress_sources.json（runs/ 已 gitignore）。
+# 缺这份配置或文件时，对应案例在表里标 SKIP，不算失败。
+LOCAL_SOURCES = os.path.join(ROOT, "runs", "local", "regress_sources.json")
+
+
+def local_sources():
+    try:
+        # utf-8-sig：PowerShell 的 Set-Content -Encoding utf8 会带 BOM，别让它把配置读空
+        with open(LOCAL_SOURCES, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def source_of(case):
+    """案例的素材路径：有 src_key 就走本地保密配置，否则用写死的 src。"""
+    if case.get("src_key"):
+        return local_sources().get(case["src_key"])
+    return case.get("src")
+
 # 已知答案：数字来自决策记录「怎么查」一节（92–93 行）
 KNOWN = [
     {
@@ -58,7 +80,7 @@ KNOWN = [
             "meta.frames": 74,
             "meta.duration_ms": 2460,
             "meta.repeat_frames": 25,
-            "counts.jumps": 16,
+            "counts.jumps": 7,
             "counts.still": 25,
             "counts.swaps": 0,
             "counts.drifts": 0,
@@ -66,26 +88,30 @@ KNOWN = [
             "len.shots": 4,
         },
         # 2026-11-08 逐帧核过：16 个 jump 全是遮挡假切（菲比三次凑近、帽檐挡满画面），
-        # 不是切点。数字保留是锁「当前行为」，不是真值；这些帧若还在 jumps 里，必须带
-        # occlusion_like 标记，否则说明标记失效。
+        # 不是切点。2026-11-09 起背景区判据压掉其中 10 处（背景窗 NCC ≥0.75），16→7；
+        # #9（bg 0.62）与 #47（bg 0.745）刚好不到阈值，仍以 jump 出现。
+        # 仍在 jumps 里、又属于遮挡簇的是 #66–70，必须带 occlusion_like 标记。
         "known_false_jumps": [9, 12, 13, 16, 17, 19, 46, 47, 50, 51, 53, 66, 67, 68, 69, 70],
-        "why": "74 帧火焰：25 重复帧、16 jump（全为遮挡假切，3 簇）、3 次转场、4 个镜头",
+        "occlusion_required": [66, 67, 68, 69, 70],
+        "why": "74 帧火焰：25 重复帧、7 jump（背景区判据压掉 10 处遮挡假切）、3 次转场、4 个镜头",
     },
 ]
 
 # 规模素材：只锁基线 ±15%，防「改一处炸一片」；数字本身不是真理
 # 基线冻结：2026-11-07（含尖峰规则版本）。旧 runs/ 里那两份是尖峰规则之前跑的，不能当基线。
+# 2026-11-09 按背景区判据更新 clipA（6→4 jump，3→2 次转场）：那两处大幅变化背景窗 NCC
+# 0.87/0.86，判据按「不是换画」处理；那段变化仍在 motion 区间与代表帧里。
 SCALE = [
     {
-        "name": "qiushui",
-        "src": os.path.join(DESKTOP, "秋水传送bug.gif"),
+        "name": "clipA",
+        "src_key": "clipA",
         "args": [],
-        "base": {"meta.frames": 192, "counts.jumps": 6, "len.transitions": 3, "len.shots": 3,
+        "base": {"meta.frames": 192, "counts.jumps": 4, "len.transitions": 2, "len.shots": 2,
                  "counts.swaps": 0, "counts.drifts": 0},
     },
     {
-        "name": "qingxiao",
-        "src": os.path.join(DESKTOP, "清宵bug.gif"),
+        "name": "clipB",
+        "src_key": "clipB",
         "args": [],
         "base": {"meta.frames": 312, "counts.jumps": 32, "len.transitions": 15, "len.shots": 16,
                  "counts.swaps": 0, "counts.drifts": 1},
@@ -110,7 +136,7 @@ def run_case(case, extra_digest=False):
     out = os.path.join(OUT_ROOT, case["name"])
     if os.path.isdir(out):
         shutil.rmtree(out)
-    cmd = [sys.executable, TOOL, case["src"], "--out", out, "--quiet"] + case["args"]
+    cmd = [sys.executable, TOOL, source_of(case), "--out", out, "--quiet"] + case["args"]
     t0 = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     secs = time.time() - t0
@@ -283,14 +309,27 @@ def main():
 
     cases = KNOWN + ([] if a.quick else SCALE)
     for c in cases:
-        if not os.path.exists(c["src"]):
-            print("素材不存在：%s（%s）" % (c["src"], c["name"]), file=sys.stderr)
+        src = source_of(c)
+        if not src:
+            print("跳过 %s：本地保密素材未配置（%s，见文件头说明）" % (c["name"], LOCAL_SOURCES),
+                  file=sys.stderr)
+            continue
+        if not os.path.exists(src):
+            if c.get("src_key"):
+                # 保密素材可能已从本机移走：跳过，不当失败（规模回归的覆盖缺口会在汇总里写出来）
+                print("保密素材不在本机，跳过：%s" % c["name"], file=sys.stderr)
+                continue
+            print("素材不存在：%s（%s）" % (src, c["name"]), file=sys.stderr)
             return 2
+        c["_src"] = src
 
     os.makedirs(OUT_ROOT, exist_ok=True)
     rows, failed, drifted = [], 0, 0
 
     for c in cases:
+        if not c.get("_src"):
+            rows.append((c["name"], "SKIP", "本地保密素材不在本机 / 未配置", 0.0))
+            continue
         d, err, secs = run_case(c)
         if err:
             rows.append((c["name"], "FAIL", err, secs))
@@ -305,7 +344,9 @@ def main():
                 if got >= cap["local_mag_max"]:
                     problems.append("local_mag_max 期望 < %.2f，实得 %.3f" % (cap["local_mag_max"], got))
         if "known_false_jumps" in c:
-            problems += check_occlusion(d, c["known_false_jumps"])
+            # 只要求「现在还在 jumps 里、且属于遮挡簇」的帧带标记；被新判据压掉的、以及
+            # 差一点没压掉的单帧（见 clip74 的 #9/#47）不强制，真值仍记在 known_false_jumps 里。
+            problems += check_occlusion(d, c.get("occlusion_required", c["known_false_jumps"]))
         if "base" in c:
             tol = check_tolerance(d, c["base"])
             if tol:
@@ -342,8 +383,12 @@ def main():
     with open(os.path.join(OUT_ROOT, "report.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
 
-    print("\n%d/%d 通过；drift %d。报告：%s" % (
-        len(rows) - failed - drifted, len(rows), drifted, os.path.join(OUT_ROOT, "report.json")))
+    skipped = sum(1 for _, s, _, _ in rows if s == "SKIP")
+    ran = len(rows) - skipped
+    print("\n%d/%d 通过；drift %d%s。报告：%s" % (
+        ran - failed - drifted, ran, drifted,
+        ("；%d 个案例跳过（保密素材不在本机）" % skipped) if skipped else "",
+        os.path.join(OUT_ROOT, "report.json")))
     return 0 if (failed == 0 and drifted == 0) else 1
 
 

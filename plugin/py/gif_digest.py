@@ -67,6 +67,13 @@ TH = {
     "jump_hsv_score": 18.0,        # 突变候选：HSV 三通道加权差（0–255）
     "jump_ncc": 0.55,              # 突变：与 HSV 分联合的结构相关性阈值
     "jump_ncc_hard": 0.35,         # 结构相关性低于此值，无需分数也判突变
+    # 背景区（2026-11-09，D 节）：真切点连背景一起换；快速运动 / 遮挡只换前景。
+    # 取 jump 前后各 500ms 的中位画面（中位把移动前景压掉），在两帧上算 NCC。
+    # 12 个 GIF 的 16 处 jump：7 处真切点 ≤0.62，39EC 的 5 处草叶横掠 0.82–0.88；
+    # calib 15 个真切点 ≤0.11、3 个同场景难例 0.16–0.39。阈值取间隔中点 0.75。
+    "jump_bg_ncc": 0.75,           # 背景窗 NCC ≥ 此值 → 同一画面上的运动，不报 jump
+    "jump_bg_window_ms": 500.0,    # 前后各取多长的窗口做中位画面
+    "jump_bg_min_frames": 3,       # 窗口内至少几帧才算得出来（素材短 / 抽帧稀就不判）
     "still_energy": 0.8,          # 静止：灰度帧差均值 < 0.8
     "still_changed_frac": 0.02,   # 静止：变化像素占比 < 2%
     "still_dx_dy": 0.5,           # 静止：位移小于半像素
@@ -584,6 +591,32 @@ def resample_indices(frames, durs, fps: float | None, max_frames: int | None):
     return idx
 
 
+def background_ncc(grays, times, k, th=None):
+    """第 k 帧前后各窗口的中位画面之间的 NCC —— 「背景区」相似度。
+
+    中位帧把移动中的前景压掉，剩下的是背景：真切点连背景一起换（值低），
+    快速运动 / 遮挡 / 掠过只换前景（值高）。窗口里帧数不够（短素材、抽帧太稀）
+    就返回 None，表示这一对不判背景——宁可沿用原判据，也不拿一两帧瞎猜。
+    """
+    th = TH if th is None else {**TH, **th}
+    win_ms = float(th["jump_bg_window_ms"])
+    min_n = int(th["jump_bg_min_frames"])
+    t = float(times[k])
+    lo = int(np.searchsorted(times, t - win_ms, side="left"))
+    hi = int(np.searchsorted(times, t + win_ms, side="right"))
+    before, after = grays[lo:k], grays[k:hi]
+    if len(before) < min_n or len(after) < min_n:
+        return None
+    return grid_ncc(np.median(np.stack(before), axis=0),
+                    np.median(np.stack(after), axis=0))
+
+
+def _jump_candidate(p, th):
+    """与 classify_pairs 里的突变条件同一套，只是参数可放宽（筛候选用）。"""
+    return (p["ncc"] < th["jump_ncc_hard"]
+            or (p["hsv"] >= th["jump_hsv_score"] and p["ncc"] < th["jump_ncc"]))
+
+
 def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE, classify=True):
     """逐对测量变化分、能量、运动；默认顺带分类（classify=False 供标定扫参用）。"""
     sel = [frames[i] for i in idx]
@@ -628,6 +661,12 @@ def analyse(frames, durs, idx, work_side=ANALYSIS_SIDE, classify=True):
             "kind": "motion",
             "motion": mot,
         })
+    # 背景相似度只给「可能成为 jump」的对算：每对都要堆窗口做中位，全算会拖慢长视频。
+    # 门槛放到扫参网格的最低一档（hsv 10 / ncc 0.65），calib 换参数时字段也不会缺。
+    loose = {"jump_hsv_score": 10.0, "jump_ncc": 0.65, "jump_ncc_hard": 0.35}
+    for k, p in enumerate(pairs):
+        if _jump_candidate(p, loose):
+            p["bg_ncc"] = background_ncc(grays, times, k + 1)
     if classify:
         classify_pairs(pairs, TH)
     return {
@@ -659,7 +698,7 @@ def content_events(pairs, frames, idx, times, th=None):
             continue
         if abs(m.get("scale", 1.0) - 1.0) > th["swap_scale"]:
             continue
-        # 局部不能有运动：内容替换是「屏不动、内容换」；游戏里那一帧会有 29% 的块在动（秋水 10160ms）
+        # 局部不能有运动：内容替换是「屏不动、内容换」；游戏里那一帧会有 29% 的块在动（保密素材 10160ms）
         if m.get("local_frac", 0.0) > th["swap_local_frac"]:
             continue
         nb = [j for j in range(max(0, i - 3), min(len(pairs), i + 4)) if j != i]
@@ -904,6 +943,15 @@ def classify_pairs(pairs, th=None):
         p["hsv_base"] = base
         if p["kind"] == "jump" and p["hsv"] < th["spike_factor"] * base + th["spike_offset"]:
             p["kind"] = "subtle" if p["energy"] < th["subtle_energy"] else "motion"
+    # 背景没换的「突变」是同一画面上的快速运动 / 遮挡，不是换画：降级为 motion/subtle。
+    # 放在尖峰判定之后，只处理已经挺过前两道闸的对；没算出背景值（窗口帧数不足）的不判。
+    for p in pairs:
+        if p["kind"] != "jump":
+            continue
+        bg = p.get("bg_ncc")
+        if bg is not None and bg >= th["jump_bg_ncc"]:
+            p["kind"] = "subtle" if p["energy"] < th["subtle_energy"] else "motion"
+            p["bg_suppressed"] = True
     for p in pairs:
         mot = p["motion"]
         if p["kind"] == "motion" and mot and p["energy"] < th["subtle_energy"] \
@@ -1721,7 +1769,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         w = csv.writer(fh)
         w.writerow(["pair", "from_frame", "to_frame", "t_ms", "kind", "hsv_score", "ncc",
                     "coherence", "energy", "changed_frac", "hard_frac", "dx_px", "dy_px", "scale",
-                    "resid_px", "valid_blocks", "local_mag_px", "local_mag_mean_px", "local_frac"])
+                    "resid_px", "valid_blocks", "local_mag_px", "local_mag_mean_px", "local_frac",
+                    "bg_ncc"])
         for p in pairs:
             m = p["motion"]
             w.writerow([p["frame"], idx[p["frame"] - 1], idx[p["frame"]], f"{p['t_ms']:.0f}",
@@ -1735,7 +1784,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                         f"{m['resid']:.2f}" if m else "", m["valid"] if m else "",
                         f"{m.get('local_mag', 0):.2f}" if m else "",
                         f"{m.get('local_mag_mean', 0):.2f}" if m else "",
-                        f"{m.get('local_frac', 0):.3f}" if m else ""])
+                        f"{m.get('local_frac', 0):.3f}" if m else "",
+                        f"{p['bg_ncc']:.3f}" if p.get("bg_ncc") is not None else ""])
 
     render_sheet(frames, durations, idx, times, set(keys), out_dir / "sheet.png",
                  cell_w=cell_w,
@@ -1761,6 +1811,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                                      and p["changed_frac"] >= TH["occlusion_frac"]
                                      and p["ncc"] < TH["occlusion_ncc"]),
               "coherence": round(p["motion"]["coherence"], 3) if p["motion"] else None,
+              "bg_ncc": round(p["bg_ncc"], 3) if p.get("bg_ncc") is not None else None,
               "resid_px": round(p["motion"]["resid"], 2)
               if p["motion"] and p["motion"]["resid"] == p["motion"]["resid"] else None}
              for p in pairs if p["kind"] == "jump"]

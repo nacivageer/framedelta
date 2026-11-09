@@ -11,7 +11,7 @@
 | A 输入加固 | 完成（2026-11-09） | 无 | 新会话 A |
 | B 发布卫生 | 完成（2026-11-09） | 无（可与 A 并行） | 新会话 B |
 | C 交付体验 | 完成（2026-11-09） | **A 完成** | 新会话 C |
-| D 判据（背景区 jump / 溶解） | 发布后 | C 完成 | 另开 |
+| D 判据（背景区 jump / 溶解） | 背景区 jump 完成（2026-11-09）；溶解、更大样本待新会话 | C 完成 | 本会话 + 新会话 |
 
 状态只填：待办 / 进行中 / 完成（日期）/ 阻塞（原因）。每会话结束更新本表 + 在文末日志加一行。
 
@@ -21,6 +21,7 @@
 - 不改 `TH` 阈值、不改 `analyse()` / `pick_key_frames()` / 事件判据——那是 D 的事。
 - 改 `gif_digest.py` 后必须 `python tools/sync_plugin.py`，并跑 `--check`。
 - 不把 `runs/`、桌面素材、`bilibili` 临时文件加进 Git。
+- **两个测试素材（regress 的 `clipA` / `clipB`）的画面内容不得公开**：文件本身、截图、抽帧、base64 一律不进仓库；文件名与文字描述可以写，但代码里只写代号、路径走 `runs/local/regress_sources.json`（已 ignored，缺配置时这两个案例 SKIP）。
 - **A 与 B 并行时，commit 只 `git add` 自己改的文件**；`git status` 里出现对方的文件不要提交。
 - commit 前把 `git status --short` 与验收输出给格看，等确认。
 - 工作区：`C:\Users\Administrator\Documents\deepseek-harness\framedelta`，分支 `master`，remote `origin` = `https://github.com/nacivageer/framedelta.git`（public，2026-11-09 21:28 首推；推送授权由格逐次给，别默认能推）。
@@ -118,9 +119,18 @@ python tools/sync_plugin.py && python tools/sync_plugin.py --check
 - `test_budget.py` / `regress --quick` 不回归。
 - 改 `gif_digest.py` 后同步插件副本并 `--check`。
 
-## D 发布后（不在本卡执行）
+## D 判据（发布后）
 
-背景区 jump 判据、溶解判据、更大样本复读。前置：A/B/C 完成、alpha 已发。D 的验收必须包含 `tools/calib.py` 的 17 段 P/R 与 `gifcheck --strict-jumps`。
+前置：A/B/C 完成、alpha 已发。D 的验收必须包含 `tools/calib.py` 的 17 段 P/R 与 `gifcheck --strict-jumps`。
+
+1. **背景区 jump 判据——完成（2026-11-09）**。做法、阈值依据、数字与已知残留见 `docs/决策记录.md`「背景区 jump 判据」一节（只读那一节即可）。摘要：12 段 GIF 的 jump 16→11（7/7 真切点保留、误报 9→4），calib 17 段 P/R/F1 = 1.00，eval 12 段产物结构不动。
+2. **溶解判据——未做**。L1 的 11.1 / 14.2 两处（文字在持续运动的底片上淡出；两个实拍镜头的叠化）。三条整幅统计已判死（`docs/方案_渐变判据.md` 第 2 节），**不要再给 `fade_events` 加阈值**；方向是区域级（文字/图层区域的变化）或场景身份（局部特征匹配率）。样本只有 2 处，先写测量脚本把「可分 / 不可分」定下来，再谈实现与阈值。
+3. **更大样本复读——未做**。现有读数建立在 3 段 15 秒 + 9 段 3 秒上，且 15 秒里只有 1 段真人。要新语料 + 独立读图方；**开工前先跟格定语料与预算**（读图方 token 成本要点头）。
+
+接手状态（新会话先看）：
+
+- `regress` 现在是 **2/2 通过 + 2 跳过**：两段保密素材已从本机移走，规模覆盖缺口见 22:40 日志；长片段看 `eval_run`（L1 452 帧）、GIF 结构看 `gifcheck`。
+- 改 `gif_digest.py` 后必须 `python tools/sync_plugin.py` 并 `--check`。
 
 ## 新会话启动语
 
@@ -136,6 +146,10 @@ C：
 
 > 读 `docs/tasks/release-alpha.md`，只做 C 节。先确认 A 的状态是「完成」；如果还是「进行中/阻塞」，停手告诉我。完成后按 C 的验收跑，更新状态块与日志。
 
+D（剩余两项，按需选一个）：
+
+> 读 `docs/tasks/release-alpha.md` 的 D 节与顶部状态块。背景区 jump 已完成并提交，别重做；先只读 `docs/决策记录.md` 的「背景区 jump 判据」一节，不要通读整份决策记录。本轮只做 <溶解判据 | 更大样本复读>。**动手前先给我方案**：溶解要写清判据族与测量办法、预期能补几个漏点；更大样本要写清语料从哪来、几个读图方、大约多少 token。我点头后再改代码。改完跑 `calib.py`、`gifcheck --strict-jumps`、相关单测与 `regress.py`，更新状态块与日志；commit 前把 `git status --short` 与验收输出给我看。
+
 ## 日志
 
 - 2026-11-09 20:45 建卡。工作区干净，`master`，无 remote。
@@ -147,3 +161,7 @@ C：
 - 2026-11-09 21:34 CI 首跑：run #2（`ebe6064`）conclusion `success`，4 个 job 全绿（ubuntu / windows × py3.10 / py3.12）。run #1（`001e6a0`）被 concurrency 取消，属预期。**但有一处未确认**：Windows 上 `Input tests` 步 4 s（ffmpeg 由 choco 装），ubuntu 上同一步只记 **0 s**（本地实测 7.7 s），怀疑走了 `test_input.py` 的「没有 ffmpeg → 打印 SKIP」分支（SKIP 也 exit 0，job 结论照样 success）；匿名拉 Actions 日志返回 403（需 admin 权限），没看到实际输出。要堵这个洞：让 CI 在缺 ffmpeg 时硬失败（如加一步 `command -v ffprobe`，或给 test_input 加 `--require-ffmpeg`），否则 ubuntu 上的 mp4 / 旋转用例等于没跑。
 - 2026-11-09 21:41 上条疑点追查完毕：**是真空跑**，已修。根因两条——① `ubuntu-latest` 就是 Ubuntu 24.04（runner-images README 的 label 表），24.04 镜像的软件清单里**没有 ffmpeg / ffprobe**（只有 mediainfo，不是一回事），`test_input.py:194` 命中 SKIP 分支后照样 `exit 0`；② 原 `Show ffmpeg version` 步是 `ffmpeg -version | head -n 1`，默认 `bash -e` 没开 `pipefail`，退出码取最后一个命令（`head`）的 0，所以缺 ffmpeg 也是绿——这一步绿着本身即证明 pipefail 没开。本地复现：把 ffmpeg 摘出 PATH 跑 `test_input.py` → 0.51 s、exit 0、`SKIP … / ALL PASS`，与 ubuntu 的 0 s + success 完全一致；Windows 腿是 choco 真装了 ffmpeg，所以 `Input tests` 4 s 是实跑。影响：Linux 腿从未覆盖旋转 / `ffprobe` 解析 / 坏输入。修法：`test_input.py` 加 `--require-ffmpeg`（缺依赖 `exit 1`，默认行为仍是 SKIP，本地不受影响）；workflow 拆成 `Install ffmpeg (Linux)`（`apt-get install -y ffmpeg` + 不用管道的 `ffmpeg -version` / `ffprobe -version`）与 `Install ffmpeg (Windows)`（装完再 `Get-Command` 断言并抛错），删掉被管道掩盖的 `Show ffmpeg version`，`Input tests` 改跑 `python tools/test_input.py --require-ffmpeg`。本地验证：YAML 解析、有/无 ffmpeg × 带/不带 flag 四条路径（ALL PASS / FAIL exit 1 / SKIP exit 0）、其余单测与 `regress --quick` 全过。代价：ubuntu 每 job +约 30 s。
 - 2026-11-09 21:48 21:41 的修复已验证：run #3（`a381796`）conclusion `success`，4 条腿全绿——`Install ffmpeg (Linux)` apt 16–19 s，`Input tests` 在 ubuntu 从 **0 s 变成 2–3 s**（Windows 仍 4 s）。结论可判定：`--require-ffmpeg` 缺依赖会 `exit 1`，所以绿就等于没走 SKIP，Linux 腿的旋转 / `ffprobe` 解析 / 坏输入这次真跑过。`origin/master` = `a381796`，工作区干净。
+- 2026-11-09 22:05 D 节第一项（背景区 jump）落代码，**未提交、等格确认**。`background_ncc()`：jump 前后各 500ms 中位画面的 NCC，≥0.75 判为「同一画面上的运动/遮挡」，降级 motion/subtle（`bg_suppressed`），`flow.csv` 与 `digest.jumps[].bg_ncc` 带证据；`TH` 加 `jump_bg_ncc / jump_bg_window_ms / jump_bg_min_frames`。阈值取真切点上限 0.623 与误报下限 0.82 的间隔中点。结果：12 个 GIF jump 16→11（7/7 真切点全留、误报 9→4、新误报 0）；calib 17 段 P/R/F1 仍 1.00/1.00/1.00（15/15）；eval 12 段 jump/transitions/shots 全不动（13/16 读数不用重测）。基线更新：clip74 16→7（#66–70 仍带 occlusion_like，#9/#47 差一点没压到）、clipA 6/3/3→4/2/2（bg 0.87）。新增 `tools/test_jump_bg.py` 6 组；`regress` 4/4、`gifcheck --strict-jumps` 0、`sync_plugin --check` 一致。细节见决策记录「背景区 jump 判据」。D 剩溶解判据（要换判据族）与更大样本复读。
+- 2026-11-09 22:25 格指出两个测试素材含保密内容：工作树里的引用已全部清掉——`regress` 改成从 `runs/local/regress_sources.json`（已 ignored）读路径、缺文件就 SKIP，案例改名 `clipA` / `clipB`；文档与 `gif_digest.py` 注释里的文件名、内容描述换成代号；确认仓库从未收进这两个文件本身（无任何 gif/mp4/png 被跟踪）。**历史里还有 4 个早期 commit 带原文件名（已随首发公开）**，是否改写历史待格决定。
+- 2026-11-09 22:35 格澄清：**只有画面内容不能公开，文件名无所谓**。核对：仓库历史上从未提交过任何 gif/mp4/png（`git log --diff-filter=A` 无记录），当前跟踪里也没有二进制——两个素材的画面从未离开本机，抽帧与产物都在 ignored 的 runs/ 下。因此**不改写历史**；代号 clipA/clipB 与 `runs/local/` 路径配置保留（顺带把机器相关路径移出公开代码，克隆者跑 regress 时这两例会 SKIP 而不是报错）。
+- 2026-11-09 22:40 两个保密素材已从 D:\Desktop 移走（22:35 检查时已不在）：它们原先提供的「规模素材 ±15%」两例（clipA/clipB）现在 SKIP，`regress` 报 **2/2 通过 + 2 跳过**（exit 0，不再当成素材缺失硬失败）。**覆盖缺口要记住**：regress 现在只剩两段短素材，长素材 / 多变数量级由 `eval_run`（L1 452 帧）与 `gifcheck`（12 段 GIF）覆盖；要恢复这两例，把文件放回 `runs/local/regress_sources.json` 指的路径即可。
