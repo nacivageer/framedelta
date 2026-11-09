@@ -22,6 +22,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,12 @@ FG = (232, 236, 239)
 DIM = (128, 138, 146)
 ACCENT = (255, 90, 60)
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"}
+
+# 解码内存上限（2026-11-09 C 节）：0.1 不做流式解码，每帧是一整块 numpy 数组，
+# 1080p 30 秒 ≈ 900 × 1920 × 1080 × 3 × 2 ≈ 11 GB，会把机器直接换掉。
+# 环境变量按字节数读；0 或负数 = 关闭上限（只给排查用，别写进文档示例）。
+MAX_BYTES_ENV = "DSH_FRAMEDELTA_MAX_BYTES"
+DEFAULT_MAX_DECODE_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 # 阈值集中在一处，写进 digest.json，产物才可复现
@@ -225,7 +232,76 @@ def probe_video(path: Path) -> dict:
         raise SystemExit("视频没有有效的宽高：%s" % path)
     fps, suspect = _fps_of_stream(st)
     return {"width": w, "height": h, "rotation": _rotation_of(st),
-            "fps": fps, "vfr_suspect": suspect}
+            "fps": fps, "vfr_suspect": suspect, "frames": _frame_count_of(st, fps)}
+
+
+def _frame_count_of(stream: dict, fps: float) -> int:
+    """ffprobe 能给出的解码帧数：优先 nb_frames，退 duration × fps；都给不出就是 0。
+
+    只用于解码前的内存估算，不参与帧数 / 时长的统计（那两个仍以实际解出的帧为准）。
+    """
+    try:
+        n = int(str(stream.get("nb_frames") or "").strip())
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        return n
+    try:
+        secs = float(stream.get("duration") or 0)
+    except (TypeError, ValueError):
+        secs = 0.0
+    if secs > 0:
+        return int(round(secs * (fps or 25.0)))
+    return 0
+
+
+def estimate_decode_bytes(info: dict) -> int:
+    """解码前估算峰值内存：帧数 × w × h × 3 × 2。
+
+    2 倍 = ffmpeg 吐出的整段 raw（bytes）+ numpy 里每帧 `.copy()` 的那一份。宽高用编码尺寸
+    （`-noautorotate` 之后 raw 就是这个尺寸；90/270 旋转不改变像素总数）。analyse() 的降采样
+    发生在解码之后，省不了这段。
+    """
+    w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+    n = int(info.get("frames") or 0)
+    return max(0, n) * max(0, w) * max(0, h) * 3 * 2
+
+
+def decode_byte_limit(env=None) -> int:
+    """`DSH_FRAMEDELTA_MAX_BYTES` → 字节上限。没设 / 不是数字用默认；≤0 关闭上限。"""
+    raw = ((os.environ if env is None else env).get(MAX_BYTES_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_MAX_DECODE_BYTES
+    try:
+        val = int(float(raw.replace("_", "")))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_DECODE_BYTES
+    return val if val > 0 else 0
+
+
+def _human_bytes(n: float) -> str:
+    """报错里的大小：< 1 GB 用 MB/KB，否则 0.0 GB 这种写法读不出差别。"""
+    if n >= 1024 ** 3:
+        return "%.1f GB" % (n / 1024 ** 3)
+    if n >= 1024 ** 2:
+        return "%.0f MB" % (n / 1024 ** 2)
+    return "%.0f KB" % (n / 1024)
+
+
+def check_decode_budget(info: dict, path: Path, env=None) -> int:
+    """解码前拦一次，返回估算字节数（写进 meta）。超限只给中文说明，不抛 traceback。"""
+    est = estimate_decode_bytes(info)
+    limit = decode_byte_limit(env)
+    if limit and est > limit:
+        raise SystemExit(
+            "这段视频太大：全量解码预计要 %s 内存（%d 帧 × %d×%d 像素 × 3 × 2 份），"
+            "超过上限 %s（%s）。\n"
+            "当前版本会先把整段视频解进内存（0.2 才做流式），请先转码或降分辨率再来，例如：\n"
+            "  ffmpeg -i \"%s\" -vf \"scale=-2:720\" -c:v libx264 -crf 23 out.mp4\n"
+            "注意 --max-frames / --fps 只减少分析的帧数，不减少解码内存。"
+            % (_human_bytes(est), int(info.get("frames") or 0), int(info.get("width") or 0),
+               int(info.get("height") or 0), _human_bytes(limit), MAX_BYTES_ENV, path))
+    return est
 
 
 def _rotate_stack(arr: np.ndarray, rotation: int) -> np.ndarray:
@@ -1305,12 +1381,22 @@ def hotspot(pairs, wh=None, pairs_skip_jump=True):
 # --------------------------------------------------------------------------
 
 def _font(size=13):
-    for name in ("consola.ttf", "segoeui.ttf", "msyh.ttc"):
+    """标签字体：先找系统字体，最后 `load_default(size)`（Pillow ≥ 10.1 才接受 size）。
+
+    候选顺序按「跨平台常见 → 有中文字形」排：Windows 的 consola/segoeui/msyh，Linux 与
+    macOS 的 DejaVu / Noto。全都没有时 load_default(size) 仍是**等宽位图**以外的可缩放字体，
+    版式（`_fit` 的格子尺寸、label_h）不随字体变化。
+    """
+    for name in ("consola.ttf", "segoeui.ttf", "msyh.ttc",
+                 "DejaVuSans.ttf", "NotoSansCJK-Regular.ttc", "arial.ttf"):
         try:
             return ImageFont.truetype(name, size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size)
+    except TypeError:      # Pillow < 10.1：老签名没有 size
+        return ImageFont.load_default()
 
 
 def _fit(im: Image.Image, box_w: int, box_h: int):
@@ -1494,6 +1580,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
     is_video = (not input_path.is_dir()) and ext in VIDEO_EXTS
     # 视频先 probe 一次（旋转 / 帧率），再交给 loader；GIF / 目录没有这些元数据
     vinfo = probe_video(input_path) if is_video else {}
+    # 0.1 没有流式解码：编码尺寸已知、帧还没解进内存时先算一遍，超限就停。
+    est_bytes = check_decode_budget(vinfo, input_path) if is_video else 0
     frames, durs, loop = load_frames(input_path, fps, info=vinfo or None)
     source_type = ('dir' if input_path.is_dir()
                    else 'gif' if ext == '.gif'
@@ -1596,6 +1684,11 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         budget["note"] = ("同一画面不重复占格：预算 %d 张、实出 %d 张"
                           % (k_want, len(keys)))
 
+    # 解码内存：video 是解码前按 ffprobe 算的估算值；GIF / 目录 / 单图没有 ffprobe 预算，
+    # 解完才知道总量，这里记实际解码字节（同口径），字段名保持一个，读图方不必分支。
+    decoded_bytes = est_bytes or (int(n) * int(frames[0].shape[1])
+                                  * int(frames[0].shape[0]) * 3 * 2)
+
     # meta.json
     meta = {
         "schema": "framedelta/meta@1",
@@ -1609,6 +1702,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         "fps": round(n * 1000.0 / total_ms, 3) if total_ms else None,
         "rotation": int(vinfo.get("rotation", 0)),
         "vfr_suspect": bool(vinfo.get("vfr_suspect", False)),
+        "estimated_decode_bytes": decoded_bytes,
         "loop": loop, "repeat_frames": repeats,
         "repeat_definition": f"mean |ΔRGB| < {TH['repeat_mean_abs_rgb']}",
         "frame_durations_ms": durations if len(set(durations)) > 1 else [durations[0]],
@@ -1693,6 +1787,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         "meta": {"frames": n, "duration_ms": int(total_ms),
                  "fps": meta["fps"], "repeat_frames": repeats,
                  "rotation": meta["rotation"], "vfr_suspect": meta["vfr_suspect"],
+                 "estimated_decode_bytes": decoded_bytes,
                  "analysed": len(idx)},
         "budget": budget,
         "thresholds": TH,

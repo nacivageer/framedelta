@@ -22,6 +22,8 @@ export const SCRIPT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'py', '
 
 const DIGEST = 'digest.json';
 const SHEET = 'sheet.png';
+/** 主图：代表帧 + 运动箭头，比全量网格更省读图成本，也直接对上文本里的 picks。 */
+const ANNOTATED = 'annotated.png';
 
 /** execFile 的上限：工具本身给宿主 900s，这里留 30s 收尾。 */
 const PY_TIMEOUT_MS = 870_000;
@@ -271,7 +273,7 @@ export function formatDigest(digest, { outDir, reused, ms, name } = {}) {
   }
   const events = eventLines(digest);
   lines.push(...(events.length ? events : [`no jump / swap / drift / fade above threshold`]));
-  if (frames.length) lines.push('picks (frame numbers match the labels on the sheet):', ...frames);
+  if (frames.length) lines.push('picks (frame numbers match the labels on the image):', ...frames);
   lines.push(`out ${outDir}`);
   return lines.join('\n');
 }
@@ -279,7 +281,23 @@ export function formatDigest(digest, { outDir, reused, ms, name } = {}) {
 /* ---- 一次完整调用 --------------------------------------------------------- */
 
 /**
- * @returns {Promise<{text: string, sheet: Buffer, outDir: string, digest: object, meta: object, reused: boolean}>}
+ * 主图：优先 `annotated.png`（代表帧 + 运动箭头），没有才退 `sheet.png`（全量网格）。
+ *
+ * 两张都没有不该让整条调用失败：文本本身仍然有用，调用方会看到「没有图」的说明。
+ * 返回的字段名仍是 `sheet`（宿主侧与旧调用方按这个键取图），但内容可能是任意一张主图。
+ */
+function readMainImage(outDir) {
+  for (const name of [ANNOTATED, SHEET]) {
+    try {
+      return readFileSync(join(outDir, name));
+    } catch { /* 换下一个候选 */ }
+  }
+  return null;
+}
+
+/**
+ * @returns {Promise<{text: string, sheet: Buffer|null, outDir: string, digest: object, meta: object, reused: boolean}>}
+ *   `sheet` 是主图（annotated.png 优先，退回 sheet.png），不是「一定是总览拼图」的意思。
  */
 export async function runFramedelta({ args = {}, ctx, exec, config = {}, env = process.env, script = SCRIPT_PATH }) {
   const bases = [await sessionCwd(ctx, exec), process.cwd()];
@@ -303,13 +321,8 @@ export async function runFramedelta({ args = {}, ctx, exec, config = {}, env = p
     throw new Error(`framedelta.py finished but ${digestPath} is unreadable: ${error?.message ?? error}`);
   }
 
-  const sheetPath = join(outDir, SHEET);
-  let sheet = null;
-  try {
-    sheet = readFileSync(sheetPath);
-  } catch {
-    // 图没了不该让整条调用失败：文本本身仍然有用，调用方会看到"没有图"的说明。
-  }
+  // 主图只回一张：annotated 优先。两张都缺失时调用方仍拿到文本，index.js 会追加说明。
+  const sheet = readMainImage(outDir);
 
   const text = formatDigest(digest, { outDir, reused: reusable, ms: run.ms, name: basename(input) });
   return {
