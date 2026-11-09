@@ -12,7 +12,9 @@ rotation 90 → np.rot90(k=1)、180 → k=2、270 → k=-1，90/270 交换宽高
 
 用法
     python tools/test_input.py        # 秒级；mp4 用例需要 ffmpeg/ffprobe
+    python tools/test_input.py --require-ffmpeg   # CI 用：缺 ffmpeg 直接失败，不静默跳过
 """
+import argparse
 import json
 import shutil
 import subprocess
@@ -186,12 +188,22 @@ def test_rotation(fails):
                                "got=%r" % (meta.get("vfr_suspect"),))
 
 
-def main():
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="输入加固的契约单测")
+    ap.add_argument("--require-ffmpeg", action="store_true",
+                    help="没有 ffmpeg / ffprobe 时直接失败，而不是跳过 mp4 用例（CI 用）")
+    args = ap.parse_args(argv)
+
     fails = 0
     CASES.mkdir(parents=True, exist_ok=True)
     test_parse_rate(fails)
 
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        # 2026-11-09 追出来的坑：ubuntu-latest 镜像没有 ffmpeg，本脚本原来打印 SKIP 后
+        # 仍然 exit 0 + "ALL PASS"，CI 的 Linux 腿等于空跑（job 结论还是 success）。
+        if args.require_ffmpeg:
+            print("FAIL  没有 ffmpeg / ffprobe，mp4 用例无法运行（--require-ffmpeg）")
+            return 1
         print("SKIP  mp4 用例（本机没有 ffmpeg / ffprobe）")
     else:
         make_src()

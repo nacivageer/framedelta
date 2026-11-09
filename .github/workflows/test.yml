@@ -36,18 +36,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Install ffmpeg if missing (Windows)
+      # 2026-11-09 追查：ubuntu-latest(24.04) 镜像里没有 ffmpeg，原来那步
+      # `ffmpeg -version | head -n 1` 在默认 bash -e（无 pipefail）下拿 head 的 0 当成功，
+      # 于是 ubuntu 腿的 Input tests 一直在走「缺 ffmpeg → SKIP」的静默分支。
+      # 现在 Linux 显式装，两步都真检查，Input tests 加 --require-ffmpeg 兜底。
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
             choco install ffmpeg -y --no-progress
           }
-          ffmpeg -version | Select-Object -First 1
-
-      - name: Show ffmpeg version
-        if: runner.os != 'Windows'
-        run: ffmpeg -version | head -n 1
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            throw 'ffmpeg 装完仍然找不到'
+          }
+          ffmpeg -version
 
       # 契约单测：合成数据，不依赖本地素材（regress / gifcheck 需要桌面素材，不在这里跑）
       - name: Unit tests
@@ -56,7 +67,8 @@ jobs:
           python tools/test_fades.py
           python tools/test_resample.py
 
-      # A 交付 test_input.py 后自动接上；mp4 旋转用例需要 ffmpeg/ffprobe
+      # A 交付 test_input.py 后自动接上；mp4 旋转用例需要 ffmpeg/ffprobe。
+      # --require-ffmpeg：缺依赖时让 CI 红，不再「SKIP 但 success」。
       - name: Input tests
         if: hashFiles('tools/test_input.py') != ''
-        run: python tools/test_input.py
+        run: python tools/test_input.py --require-ffmpeg
