@@ -1,0 +1,62 @@
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install ffmpeg if missing (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version | Select-Object -First 1
+
+      - name: Show ffmpeg version
+        if: runner.os != 'Windows'
+        run: ffmpeg -version | head -n 1
+
+      # 契约单测：合成数据，不依赖本地素材（regress / gifcheck 需要桌面素材，不在这里跑）
+      - name: Unit tests
+        run: |
+          python tools/test_budget.py
+          python tools/test_fades.py
+          python tools/test_resample.py
+
+      # A 交付 test_input.py 后自动接上；mp4 旋转用例需要 ffmpeg/ffprobe
+      - name: Input tests
+        if: hashFiles('tools/test_input.py') != ''
+        run: python tools/test_input.py

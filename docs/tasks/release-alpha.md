@@ -4,12 +4,12 @@
 
 ## 状态
 
-更新时间：2026-11-09 20:51
+更新时间：2026-11-09 21:02
 
 | 任务 | 状态 | 依赖 | 负责人 |
 |---|---|---|---|
 | A 输入加固 | 完成（2026-11-09） | 无 | 新会话 A |
-| B 发布卫生 | 待办 | 无（可与 A 并行） | 新会话 B |
+| B 发布卫生 | 完成（2026-11-09） | 无（可与 A 并行） | 新会话 B |
 | C 交付体验 | 待办 | **A 完成** | 新会话 C |
 | D 判据（背景区 jump / 溶解） | 发布后 | C 完成 | 另开 |
 
@@ -140,3 +140,5 @@ C：
 
 - 2026-11-09 20:45 建卡。工作区干净，`master`，无 remote。
 - 2026-11-09 20:51 A 完成：`probe_video()`（`-show_streams` 读 `side_data_list[].rotation`，旧版退 `tags.rotate`；avg/r 差 >5% 标 `vfr_suspect`）、`parse_rate()`（尾逗号 / `0/0` / 解析失败不崩）、解码加 `-noautorotate` 后按显示矩阵旋转（方向以 320×240 左上红块对 ffmpeg autorotate 实测：90→`rot90(k=1)`、180→k=2、270→k=-1）、`meta.json` 与 `digest.meta` 加 `rotation`/`vfr_suspect`、坏 GIF / ffprobe 失败给中文 `SystemExit`；新增 `tools/test_input.py`。验收：`test_input` 63 项 ALL PASS、`test_resample` ALL PASS、`regress --quick` 2/2 PASS，`sync_plugin --check` 一致（41b5b70464051d8e）。GIF 产物抽查：仅 meta 多两个字段，测量值未变。commit 待格确认。
+- 2026-11-09 20:54 B 完成：新增 `LICENSE`（MIT，© 2026 `72NG`——署名与 README 语言开工前问过格）、`requirements.txt`（`numpy>=1.24` / `Pillow>=10.1`）、`.github/workflows/test.yml`（ubuntu + windows × py3.10 / 3.12，跑 `test_budget` / `test_fades` / `test_resample`；`tools/test_input.py` 存在即跑，Windows 缺 ffmpeg 先装，不跑 `regress` / `gifcheck`）。README 首屏重写：定位「变化测量，不是剪辑点」+ 5 行英文摘要 + Does/Doesn't 表 + 安装 + 30 秒 quickstart + 产物表 + 已知限制（16 jump 仅 7 真切 / 溶解漏报 / 深色换页隐形 / `--max-frames` 不省解码内存 / 样本 9+3 且次数 ±1 噪声）+ MIT。`plugin/package.json`：去 `private`、`license: MIT`、`0.1.0-alpha.1`，`repository` 留空待定。验收：三单测 ALL PASS（11 组 / 8 组 / 13 项），README 搜不到「切点检测 / cut detection」，`git status --short` 只含 B 文件，workflow 经 `yaml.safe_load` 解析（7 步、矩阵正确）。未动 `gif_digest.py` 与 `tools/`。commit 待格确认。
+- 2026-11-09 21:02 B 按格的四点反馈修订 README：① 限制段数字改「现算」——`python tools/gifcheck.py --refresh` 重跑 12 段（14 s）：`jump` 16 处 / 真切点 7/7 命中 / 已知误报 9 / 新误报 0 / 漏 0；② 5 行英文摘要从 blockquote 改成独立 `## English` 一节；③ 补回状态行 `0.1.0-alpha.1`（与 `package.json` 版本对应，给读者一个成熟度锚点）；④ `calib.py` 示例措辞回退成「已知切点」——「换场」并不比「切点」更安全，两者都指向剪辑点，验收拦的是「当卖点」，工具说明该用准确词。验收结论不变（无代码改动，三单测沿用 20:54 的 ALL PASS）。
