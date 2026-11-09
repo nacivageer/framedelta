@@ -4,7 +4,7 @@
 
 ## 状态
 
-更新时间：2026-11-09 21:41
+更新时间：2026-11-09 21:48
 
 | 任务 | 状态 | 依赖 | 负责人 |
 |---|---|---|---|
@@ -146,3 +146,4 @@ C：
 - 2026-11-09 21:28 首发 GitHub：格在网页建空仓（owner `nacivageer`，display name `72NG`——`LICENSE` 署名因此不动；public；未勾 README/.gitignore/license），`git remote add origin` + `push -u origin master` 一次成功（GCM 已存 `github.com` 凭据）。回读：`ls-remote` 的 `refs/heads/master` = 本地 HEAD = `001e6a0`，`origin/master` 41 个 commit，`git status -sb` 无 ahead/behind。仓库：https://github.com/nacivageer/framedelta
 - 2026-11-09 21:34 CI 首跑：run #2（`ebe6064`）conclusion `success`，4 个 job 全绿（ubuntu / windows × py3.10 / py3.12）。run #1（`001e6a0`）被 concurrency 取消，属预期。**但有一处未确认**：Windows 上 `Input tests` 步 4 s（ffmpeg 由 choco 装），ubuntu 上同一步只记 **0 s**（本地实测 7.7 s），怀疑走了 `test_input.py` 的「没有 ffmpeg → 打印 SKIP」分支（SKIP 也 exit 0，job 结论照样 success）；匿名拉 Actions 日志返回 403（需 admin 权限），没看到实际输出。要堵这个洞：让 CI 在缺 ffmpeg 时硬失败（如加一步 `command -v ffprobe`，或给 test_input 加 `--require-ffmpeg`），否则 ubuntu 上的 mp4 / 旋转用例等于没跑。
 - 2026-11-09 21:41 上条疑点追查完毕：**是真空跑**，已修。根因两条——① `ubuntu-latest` 就是 Ubuntu 24.04（runner-images README 的 label 表），24.04 镜像的软件清单里**没有 ffmpeg / ffprobe**（只有 mediainfo，不是一回事），`test_input.py:194` 命中 SKIP 分支后照样 `exit 0`；② 原 `Show ffmpeg version` 步是 `ffmpeg -version | head -n 1`，默认 `bash -e` 没开 `pipefail`，退出码取最后一个命令（`head`）的 0，所以缺 ffmpeg 也是绿——这一步绿着本身即证明 pipefail 没开。本地复现：把 ffmpeg 摘出 PATH 跑 `test_input.py` → 0.51 s、exit 0、`SKIP … / ALL PASS`，与 ubuntu 的 0 s + success 完全一致；Windows 腿是 choco 真装了 ffmpeg，所以 `Input tests` 4 s 是实跑。影响：Linux 腿从未覆盖旋转 / `ffprobe` 解析 / 坏输入。修法：`test_input.py` 加 `--require-ffmpeg`（缺依赖 `exit 1`，默认行为仍是 SKIP，本地不受影响）；workflow 拆成 `Install ffmpeg (Linux)`（`apt-get install -y ffmpeg` + 不用管道的 `ffmpeg -version` / `ffprobe -version`）与 `Install ffmpeg (Windows)`（装完再 `Get-Command` 断言并抛错），删掉被管道掩盖的 `Show ffmpeg version`，`Input tests` 改跑 `python tools/test_input.py --require-ffmpeg`。本地验证：YAML 解析、有/无 ffmpeg × 带/不带 flag 四条路径（ALL PASS / FAIL exit 1 / SKIP exit 0）、其余单测与 `regress --quick` 全过。代价：ubuntu 每 job +约 30 s。
+- 2026-11-09 21:48 21:41 的修复已验证：run #3（`a381796`）conclusion `success`，4 条腿全绿——`Install ffmpeg (Linux)` apt 16–19 s，`Input tests` 在 ubuntu 从 **0 s 变成 2–3 s**（Windows 仍 4 s）。结论可判定：`--require-ffmpeg` 缺依赖会 `exit 1`，所以绿就等于没走 SKIP，Linux 腿的旋转 / `ffprobe` 解析 / 坏输入这次真跑过。`origin/master` = `a381796`，工作区干净。
