@@ -58,6 +58,12 @@ _COARSEN_MIN_TOTAL_MS = 5000   # 只对长片段粗化区间，短片段保持�
 KEY_BUDGET = {"base": 4, "free_ms": 8000, "per_ms": 4000, "cap": 8}
 KEY_BUDGET_RULE = "≤8s 4 张；超过 8s 后每 4 秒 +1（向上取整）；上限 8"
 
+# 披露口径（2026-11-10，select-frames 卡 A′）：事件是判据检测到的，不代表「没有变化」。
+# 这句固定写进 digest.note，不按段变化——按段 flag 已被实测推翻（运动会让相邻代表帧的
+# NCC 掉到 0.9 以下，静止口播也会被误标）。读图方要知道「没报 ≠ 没变」。
+KEY_NOTE = ("判据只报检测到的事件；帧间差异含运动，未报的变化可能落在没有代表帧的区间里"
+            "（见 key_frames[].gap_prev_s）。")
+
 # 代表帧去重（2026-11-08）：两格 NCC ≥ 0.90 就是同一张画面（同一页幻灯片 0.95–0.98，
 # 同场景换机位 0.3–0.5）。对所有输入与重采样路径都启用（不再只看 >8s）。
 _KEY_SAME_PICTURE = 0.90
@@ -1706,9 +1712,9 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                              multi_cut=len(struct["transitions"]) > 1,
                              similar=similar, tail=tail,
                              protect_jump_pair=(total_ms > KEY_BUDGET["free_ms"]))
+    by_frame = {p["frame"]: p for p in pairs}
     keys = [fi for fi, _ in picked]
     reasons = {fi: why for fi, why in picked}
-    by_frame = {p["frame"]: p for p in pairs}
 
     # 每个 pair 的逐格变化（给 hotspot 用，与 hsv_score 同口径）
     for p in pairs:
@@ -1841,6 +1847,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                  "estimated_decode_bytes": decoded_bytes,
                  "analysed": len(idx)},
         "budget": budget,
+        "note": KEY_NOTE,
         "thresholds": TH,
         "counts": {
             "pairs": len(pairs),
@@ -1863,8 +1870,11 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         "key_frames": [
             # 每张代表帧都带「相对上一帧」的量化：读图方据此判「整幅换画」还是「小块更新」，
             # 这是评测里 e5 误报（把 <1% 的面板更新读成弹出卡片）的直接对策。
+            # gap_prev_s：与上一格代表帧的秒差——读者据此看出「这一段没有帧」的空档有多大。
             dict([("frame", idx[g]), ("t_ms", round(float(times[g]), 1)),
-                  ("reason", reasons.get(g, "selected"))] +
+                  ("reason", reasons.get(g, "selected")),
+                  ("gap_prev_s", None if i == 0 else
+                   round((float(times[g]) - float(times[keys[i - 1]])) / 1000.0, 2))] +
                  ([("delta", {"kind": by_frame[g]["kind"],
                               "changed_frac": round(by_frame[g]["changed_frac"], 3),
                               "dx_px": round((by_frame[g]["motion"] or {}).get("dx", 0.0), 2),
@@ -1873,7 +1883,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
                               "local_mag_px": round(
                                   (by_frame[g]["motion"] or {}).get("local_mag", 0.0), 2)})]
                   if g in by_frame else []))
-            for g in keys],
+            for i, g in enumerate(keys)],
         "artifacts": ["meta.json", "sheet.png", "flow.csv", "kymograph.png",
                       "annotated.png", "digest.json"],
     }
