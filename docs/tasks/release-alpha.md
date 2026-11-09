@@ -4,11 +4,11 @@
 
 ## 状态
 
-更新时间：2026-11-09 20:45
+更新时间：2026-11-09 20:51
 
 | 任务 | 状态 | 依赖 | 负责人 |
 |---|---|---|---|
-| A 输入加固 | 待办 | 无 | 新会话 A |
+| A 输入加固 | 完成（2026-11-09） | 无 | 新会话 A |
 | B 发布卫生 | 待办 | 无（可与 A 并行） | 新会话 B |
 | C 交付体验 | 待办 | **A 完成** | 新会话 C |
 | D 判据（背景区 jump / 溶解） | 发布后 | C 完成 | 另开 |
@@ -139,3 +139,4 @@ C：
 ## 日志
 
 - 2026-11-09 20:45 建卡。工作区干净，`master`，无 remote。
+- 2026-11-09 20:51 A 完成：`probe_video()`（`-show_streams` 读 `side_data_list[].rotation`，旧版退 `tags.rotate`；avg/r 差 >5% 标 `vfr_suspect`）、`parse_rate()`（尾逗号 / `0/0` / 解析失败不崩）、解码加 `-noautorotate` 后按显示矩阵旋转（方向以 320×240 左上红块对 ffmpeg autorotate 实测：90→`rot90(k=1)`、180→k=2、270→k=-1）、`meta.json` 与 `digest.meta` 加 `rotation`/`vfr_suspect`、坏 GIF / ffprobe 失败给中文 `SystemExit`；新增 `tools/test_input.py`。验收：`test_input` 63 项 ALL PASS、`test_resample` ALL PASS、`regress --quick` 2/2 PASS，`sync_plugin --check` 一致（41b5b70464051d8e）。GIF 产物抽查：仅 meta 多两个字段，测量值未变。commit 待格确认。

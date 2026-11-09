@@ -27,10 +27,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
 SCHEMA = "framedelta/digest@1"
 SCAN_W, SCAN_H = 64, 36          # 与 see-now cuts.js 同口径的变化分网格
@@ -39,6 +40,8 @@ BG = (13, 16, 19)
 FG = (232, 236, 239)
 DIM = (128, 138, 146)
 ACCENT = (255, 90, 60)
+VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"}
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 # 阈值集中在一处，写进 digest.json，产物才可复现
 _COARSEN_MIN_TOTAL_MS = 5000   # 只对长片段粗化区间，短片段保持逐段原样
@@ -126,14 +129,12 @@ def _frames_from_pil(im: Image.Image):
 
 
 def load_gif(path: Path):
-    with Image.open(path) as im:
-        frames, durs, loop = _frames_from_pil(im)
+    frames, durs, loop = _pil_frames(path)
     return frames, durs, loop
 
 
 def load_dir(path: Path, fps: float | None):
-    exts = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-    files = sorted((p for p in path.iterdir() if p.suffix.lower() in exts and p.is_file()),
+    files = sorted((p for p in path.iterdir() if p.suffix.lower() in IMAGE_EXTS and p.is_file()),
                    key=lambda p: _natural_key(p.name))
     if not files:
         raise SystemExit(f"目录里没有图片：{path}")
@@ -151,51 +152,138 @@ def load_dir(path: Path, fps: float | None):
     return frames, [d] * len(frames), None
 
 
-def _ffprobe_size(path: Path):
+def _ffprobe_stream(path: Path) -> dict:
+    """v:0 的 stream 字典（含 side_data_list / tags / 帧率）。失败给中文 SystemExit。"""
+    if shutil.which("ffprobe") is None:
+        raise SystemExit("找不到 ffprobe，无法读视频元数据（GIF / 帧目录不受影响）")
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, check=True)
-    w, h = out.stdout.strip().split(",")[:2]
-    return int(w), int(h)
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise SystemExit("ffprobe 读不了这个文件：%s\n%s"
+                         % (path, (out.stderr or "").strip()[-400:]))
+    try:
+        streams = (json.loads(out.stdout or "{}").get("streams") or [])
+    except json.JSONDecodeError:
+        raise SystemExit("ffprobe 输出无法解析：%s" % path)
+    if not streams:
+        raise SystemExit("文件里没有视频流：%s" % path)
+    return streams[0]
 
 
-def load_video(path: Path):
+def parse_rate(text, fallback: float = 25.0) -> float:
+    """帧率字符串 → float。纯函数，任何输入都不抛异常。
+
+    '30000/1001' → 29.97；'30/1,'（remux 后的尾逗号）→ 30；'0/0' / 空串 /
+    解析失败 → fallback（默认 25）。帧率只是元数据，一个尾逗号不该让整段视频判死。
+    """
+    if text is None:
+        return fallback
+    s = str(text).strip().rstrip(",").strip()
+    if not s:
+        return fallback
+    try:
+        rate = Fraction(s)
+    except (ValueError, ZeroDivisionError):
+        return fallback
+    return float(rate) if rate > 0 else fallback
+
+
+def _rotation_of(stream: dict) -> int:
+    """显示旋转角（0/90/180/270）。新版读 side_data_list[].rotation，旧版退 tags.rotate。"""
+    for sd in stream.get("side_data_list") or []:
+        if isinstance(sd, dict) and "rotation" in sd:
+            try:
+                return int(round(float(sd["rotation"]))) % 360
+            except (TypeError, ValueError):
+                continue
+    tags = stream.get("tags") or {}
+    for key in ("rotate", "ROTATE"):
+        if key in tags:
+            try:
+                return int(round(float(tags[key]))) % 360
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
+def _fps_of_stream(stream: dict):
+    """(fps, vfr_suspect)。avg 优先，0/0 退 r_frame_rate，再退 25；两者差 >5% 标可疑。"""
+    avg = parse_rate(stream.get("avg_frame_rate"), 0.0)
+    r = parse_rate(stream.get("r_frame_rate"), 0.0)
+    fps = avg or r or 25.0
+    suspect = bool(avg > 0 and r > 0 and abs(avg - r) / max(avg, r) > 0.05)
+    return fps, suspect
+
+
+def probe_video(path: Path) -> dict:
+    """一次 ffprobe 拿全：编码宽高、显示旋转、帧率与 VFR 可疑标记。"""
+    st = _ffprobe_stream(path)
+    w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+    if w <= 0 or h <= 0:
+        raise SystemExit("视频没有有效的宽高：%s" % path)
+    fps, suspect = _fps_of_stream(st)
+    return {"width": w, "height": h, "rotation": _rotation_of(st),
+            "fps": fps, "vfr_suspect": suspect}
+
+
+def _rotate_stack(arr: np.ndarray, rotation: int) -> np.ndarray:
+    """按显示矩阵旋转解码帧，与 ffmpeg autorotate 逐像素一致。
+
+    方向是合成样本实测定的（320×240 左上红块，tools/test_input.py 锁住）：
+    90 → rot90(k=1)、180 → k=2、270 → k=-1；90/270 顺带交换宽高。
+    """
+    k = {90: 1, 180: 2, 270: -1}.get(int(rotation) % 360, 0)
+    if not k:
+        return arr
+    return np.rot90(arr, k=k, axes=(1, 2))
+
+
+def _pil_frames(path: Path):
+    """PIL 打开失败给中文 SystemExit（坏 GIF / 截断图片不给 traceback 当主输出）。"""
+    try:
+        with Image.open(path) as im:
+            return _frames_from_pil(im)
+    except (UnidentifiedImageError, OSError) as e:
+        raise SystemExit("读不了这个图片 / GIF（可能已损坏或被截断）：%s\n%s" % (path, e))
+
+
+def load_video(path: Path, info: dict | None = None):
+    """mp4 → 帧列表。先按编码宽高解码（-noautorotate），再按显示矩阵旋转。"""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         raise SystemExit("找不到 ffmpeg / ffprobe，无法读 mp4（GIF / 帧目录不受影响）")
-    w, h = _ffprobe_size(path)
-    raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo",
+    info = info or probe_video(path)
+    w, h = int(info["width"]), int(info["height"])
+    dec = subprocess.run(
+        ["ffmpeg", "-v", "error", "-noautorotate", "-i", str(path), "-f", "rawvideo",
          "-pix_fmt", "rgb24", "-"],
-        capture_output=True, check=True).stdout
+        capture_output=True)
+    if dec.returncode != 0:
+        raise SystemExit("ffmpeg 解码失败：%s\n%s"
+                         % (path, dec.stderr.decode("utf-8", "replace").strip()[-400:]))
+    raw = dec.stdout
     frame_bytes = w * h * 3
     n = len(raw) // frame_bytes
     if n == 0:
         raise SystemExit(f"视频里没解出帧：{path}")
     arr = np.frombuffer(raw, dtype=np.uint8, count=n * frame_bytes).reshape(n, h, w, 3)
-    fps_out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True).stdout.strip()
-    fps = 0.0
-    if "/" in fps_out:
-        a, b = fps_out.split("/")
-        fps = float(a) / float(b) if float(b) else 0.0
+    arr = _rotate_stack(arr, int(info.get("rotation", 0)))
+    fps = float(info.get("fps") or 25.0)
     d = int(round(1000 / fps)) if fps > 0 else 100
     return [f.copy() for f in arr], [d] * n, None
 
 
-def load_frames(path: Path, fps: float | None):
+def load_frames(path: Path, fps: float | None, info: dict | None = None):
     if path.is_dir():
         return load_dir(path, fps)
     ext = path.suffix.lower()
     if ext == ".gif":
         return load_gif(path)
-    if ext in {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"}:
-        return load_video(path)
-    if ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp"}:
-        with Image.open(path) as im:
-            frames, durs, loop = _frames_from_pil(im)
+    if ext in VIDEO_EXTS:
+        return load_video(path, info=info)
+    if ext in IMAGE_EXTS:
+        frames, durs, loop = _pil_frames(path)
         return frames, durs, loop
     raise SystemExit(f"不认识的输入：{path}")
 
@@ -1402,11 +1490,14 @@ def render_annotated(frames, idx, times, key_grid, analyses, out: Path):
 
 def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None,
           cell_w=180):
-    frames, durs, loop = load_frames(input_path, fps)
     ext = input_path.suffix.lower()
+    is_video = (not input_path.is_dir()) and ext in VIDEO_EXTS
+    # 视频先 probe 一次（旋转 / 帧率），再交给 loader；GIF / 目录没有这些元数据
+    vinfo = probe_video(input_path) if is_video else {}
+    frames, durs, loop = load_frames(input_path, fps, info=vinfo or None)
     source_type = ('dir' if input_path.is_dir()
                    else 'gif' if ext == '.gif'
-                   else 'video' if ext in {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
+                   else 'video' if ext in VIDEO_EXTS
                    else 'image')
     n = len(frames)
     raw_durs = list(durs)
@@ -1516,6 +1607,8 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         "zero_duration_frames": zero_durs,
         "duration_definition": f"零时长帧按非零中位数 {fallback}ms 计",
         "fps": round(n * 1000.0 / total_ms, 3) if total_ms else None,
+        "rotation": int(vinfo.get("rotation", 0)),
+        "vfr_suspect": bool(vinfo.get("vfr_suspect", False)),
         "loop": loop, "repeat_frames": repeats,
         "repeat_definition": f"mean |ΔRGB| < {TH['repeat_mean_abs_rgb']}",
         "frame_durations_ms": durations if len(set(durations)) > 1 else [durations[0]],
@@ -1599,6 +1692,7 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
         "source": str(input_path),
         "meta": {"frames": n, "duration_ms": int(total_ms),
                  "fps": meta["fps"], "repeat_frames": repeats,
+                 "rotation": meta["rotation"], "vfr_suspect": meta["vfr_suspect"],
                  "analysed": len(idx)},
         "budget": budget,
         "thresholds": TH,
@@ -1643,6 +1737,12 @@ def build(input_path: Path, out_dir: Path, fps=None, max_frames=None, key_n=None
 
 
 def main(argv=None):
+    # CLI 输出统一 UTF-8：Windows 管道下默认按 GBK 编码，中文报错到宿主就成了乱码
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="framedelta：连续帧 → 变化描述 + 可读的图")
     ap.add_argument("input", help="GIF / mp4 / 帧序列目录")
     ap.add_argument("--fps", type=float, default=None, help="按此 fps 重采样")
