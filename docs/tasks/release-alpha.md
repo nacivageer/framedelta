@@ -4,7 +4,7 @@
 
 ## 状态
 
-更新时间：2026-11-09 21:28
+更新时间：2026-11-09 21:34
 
 | 任务 | 状态 | 依赖 | 负责人 |
 |---|---|---|---|
@@ -144,3 +144,4 @@ C：
 - 2026-11-09 21:02 B 按格的四点反馈修订 README：① 限制段数字改「现算」——`python tools/gifcheck.py --refresh` 重跑 12 段（14 s）：`jump` 16 处 / 真切点 7/7 命中 / 已知误报 9 / 新误报 0 / 漏 0；② 5 行英文摘要从 blockquote 改成独立 `## English` 一节；③ 补回状态行 `0.1.0-alpha.1`（与 `package.json` 版本对应，给读者一个成熟度锚点）；④ `calib.py` 示例措辞回退成「已知切点」——「换场」并不比「切点」更安全，两者都指向剪辑点，验收拦的是「当卖点」，工具说明该用准确词。验收结论不变（无代码改动，三单测沿用 20:54 的 ALL PASS）。commit `20d2aad`（21:05 格确认后提交）。
 - 2026-11-09 21:21 C 完成（A 状态先确认为「完成」）：① 内存预算：`probe_video()` 加 `nb_frames`（缺失退 `duration × fps`）→ `estimate_decode_bytes()` = 帧数 × w × h × 3 × 2；`build()` 在 **解码前** `check_decode_budget()`，上限读 `DSH_FRAMEDELTA_MAX_BYTES`（默认 2.5 GiB，`0`/非法值分别＝关闭/默认），超限给中文 `SystemExit`（估算值、上限、转码示例，并写明 `--max-frames` / `--fps` 不省解码内存）；`meta.json` 与 `digest.meta` 加 `estimated_decode_bytes`（video＝解码前估算；GIF/目录＝解完后的实际解码量，口径相同）。② 主图：`run.js` 优先 `annotated.png`、缺失退 `sheet.png`（返回字段名仍 `sheet` 以兼容调用方），文本 `picks` 行改「labels on the image」，`tool-spec.js` 的描述 / 产物列表 / 「别重复读图」同步；按格确认**只回一张**。③ `_font()` 加 `DejaVuSans.ttf` / `NotoSansCJK-Regular.ttc` / `arial.ttf` 候选，末位 `ImageFont.load_default(size)`（Pillow < 10.1 退老签名），版式不变。验收：`test_budget` 11 组 / `test_fades` 8 组 / `test_resample` / `test_input` 全 ALL PASS，`regress --quick` 2/2（drift 0），`sync_plugin --check` 一致 `32d5a2d0f18060a4`；阈值临时降到 1 MB 跑 1080p 5 s（150 帧，est 1.7 GB）：exit 1、中文提示、无 `meta.json` 产出；6 帧 GIF 走插件：返回 18,962 B 与 `annotated.png` 逐字节相同，headline `framedelta · six.gif · 6f · 0.600s · 10.0fps · picks 4/4 · auto`；删 `annotated.png` 后复用 digest 正确回退 `sheet.png`，两张都删也不抛异常（`sheet: null`，文本照常）。`plugin/locale/en.json` 描述 `contact sheet` → `labelled key-frames image`（格点头一并改）。commit `db5da5c`。
 - 2026-11-09 21:28 首发 GitHub：格在网页建空仓（owner `nacivageer`，display name `72NG`——`LICENSE` 署名因此不动；public；未勾 README/.gitignore/license），`git remote add origin` + `push -u origin master` 一次成功（GCM 已存 `github.com` 凭据）。回读：`ls-remote` 的 `refs/heads/master` = 本地 HEAD = `001e6a0`，`origin/master` 41 个 commit，`git status -sb` 无 ahead/behind。仓库：https://github.com/nacivageer/framedelta
+- 2026-11-09 21:34 CI 首跑：run #2（`ebe6064`）conclusion `success`，4 个 job 全绿（ubuntu / windows × py3.10 / py3.12）。run #1（`001e6a0`）被 concurrency 取消，属预期。**但有一处未确认**：Windows 上 `Input tests` 步 4 s（ffmpeg 由 choco 装），ubuntu 上同一步只记 **0 s**（本地实测 7.7 s），怀疑走了 `test_input.py` 的「没有 ffmpeg → 打印 SKIP」分支（SKIP 也 exit 0，job 结论照样 success）；匿名拉 Actions 日志返回 403（需 admin 权限），没看到实际输出。要堵这个洞：让 CI 在缺 ffmpeg 时硬失败（如加一步 `command -v ffprobe`，或给 test_input 加 `--require-ffmpeg`），否则 ubuntu 上的 mp4 / 旋转用例等于没跑。
