@@ -4,7 +4,7 @@
 
 ## 状态
 
-更新时间：2026-11-10 01:50
+更新时间：2026-11-10 21:40
 
 | 步骤 | 状态 |
 |---|---|
@@ -13,7 +13,8 @@
 | 插件 tarball 挂到 Release `v0.1.0-alpha.2` | 完成 |
 | 条目 YAML 草稿（见下） | 完成，待提交 |
 | 仓库满 1 天（`created_at` 2026-11-09T13:27:59Z → 21:28） | **等到 2026-11-10 21:28** |
-| 提 PR + 跟 gate | 待办（21:35 提醒，投回本会话） |
+| 提 PR | 完成（[#13999](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/13999)，1 个文件，mergeable） |
+| 跟 gate | 进行中（check 在跑） |
 | 合并后回读：市场卡片可搜到、安装命令可用 | 待办 |
 
 **归档口径**：**GUI 的「归档会话」（Ctrl+Shift+A）之后，会话就看不到了**；记忆层（notes / chains / INDEX）是之后唯一的回顾入口，所以它必须在点归档**之前**做全——不能指望事后追加，那时会话已经打不开。本会话在 2026-11-10 00:5x 做过的那次只覆盖到「筹备完成」，是**阶段存档**，不是收尾。顺序固定为：21:35 提醒投进本会话 → 提 PR、跟 gate、回读 → 在会话还活着时补记忆层归档（T12+ 段、notes/INDEX、commit）→ 最后才点 GUI 归档。**在此之前不要归档**：提醒的投递目标是本会话，归档后它既等不到也看不到了。
@@ -45,3 +46,4 @@ tarball: https://github.com/nacivageer/framedelta/releases/download/v0.1.0-alpha
 - 2026-11-10 01:00 评估收录规则：三个硬门槛（1 天龄、`dsh.bundle` 目录名、topic），选目录搬迁方案 A 并完成；tarball 上传到 alpha.2 Release；条目草稿写入本卡。
 - 2026-11-10 01:50 归档口径更正：提醒曾改投新会话，按格的意见改回本会话——PR 与结论留在同一条线，本会话归档为阶段存档，PR 后补归档。
 - 2026-11-10 01:58 格澄清「真正归档」= GUI 的「归档会话」（会话停用、可恢复），不是记忆层索引。定顺序：提醒先投递 → 提 PR → 补记忆层归档 → 再点 GUI 归档；不提前点，避免提醒被静默吞掉。
+- 2026-11-10 21:40 提 PR #13999：fork 先 merge-upstream 同步到上游 main（09cd105），分支 add-framedelta，新增 data/plugins/nacivageer__framedelta--plugins-dsh-framedelta.yml；上游查重无 framedelta 条目、名下无既有 PR。gate 正在跑。
